@@ -1,0 +1,213 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="900" viewBox="0 0 1600 900" role="img" aria-labelledby="title desc">
+  <title id="title">FlowOps AI - Agentic Document Operations Architecture</title>
+  <desc id="desc">Current MVP architecture and production target for FlowOps AI, showing FastAPI, Google ADK, Gemini 3.6 Flash, Human Review, duplicate blocking, audit trail, local persistence, and future cloud services.</desc>
+  <defs>
+    <style>
+      .bg { fill: #07111f; }
+      .panel { fill: #0e1a2a; stroke: #24425f; stroke-width: 1.5; }
+      .panelFuture { fill: #0b1624; stroke: #6b7d92; stroke-width: 1.5; stroke-dasharray: 8 8; opacity: .78; }
+      .lane { fill: #101f31; stroke: #2c4a6b; stroke-width: 1; }
+      .box { fill: #132235; stroke: #355879; stroke-width: 1.2; rx: 10; }
+      .boxSmall { fill: #132235; stroke: #355879; stroke-width: 1.1; rx: 8; }
+      .google { fill: #122942; stroke: #62a8ff; stroke-width: 2.4; rx: 10; }
+      .gemini { fill: #1b2444; stroke: #a78bfa; stroke-width: 2.4; rx: 10; }
+      .decision { fill: #18263a; stroke: #f7b955; stroke-width: 2; rx: 10; }
+      .success { fill: #102b25; stroke: #21c58b; stroke-width: 1.8; rx: 10; }
+      .review { fill: #2a2135; stroke: #e4a94f; stroke-width: 1.8; rx: 10; }
+      .duplicate { fill: #2b1d28; stroke: #f46b7b; stroke-width: 1.8; rx: 10; }
+      .audit { fill: #102335; stroke: #6dd6ff; stroke-width: 1.5; rx: 10; }
+      .store { fill: #132b26; stroke: #54d6a0; stroke-width: 1.5; rx: 10; }
+      .futureBox { fill: #111b29; stroke: #8293a8; stroke-width: 1; stroke-dasharray: 5 5; rx: 8; opacity: .82; }
+      .title { font-family: Inter, Segoe UI, Arial, sans-serif; font-size: 46px; font-weight: 800; fill: #f8fbff; letter-spacing: 0; }
+      .subtitle { font-family: Inter, Segoe UI, Arial, sans-serif; font-size: 22px; font-weight: 600; fill: #b8d7ff; letter-spacing: 0; }
+      .minor { font-family: Inter, Segoe UI, Arial, sans-serif; font-size: 16px; fill: #8fb2d6; letter-spacing: 0; }
+      .section { font-family: Inter, Segoe UI, Arial, sans-serif; font-size: 18px; font-weight: 800; fill: #ffcc4d; letter-spacing: 0; }
+      .sectionFuture { font-family: Inter, Segoe UI, Arial, sans-serif; font-size: 17px; font-weight: 800; fill: #aebcd0; letter-spacing: 0; }
+      .label { font-family: Inter, Segoe UI, Arial, sans-serif; font-size: 15px; font-weight: 700; fill: #f4f8ff; letter-spacing: 0; }
+      .label2 { font-family: Inter, Segoe UI, Arial, sans-serif; font-size: 13px; fill: #a9c4df; letter-spacing: 0; }
+      .labelSmall { font-family: Inter, Segoe UI, Arial, sans-serif; font-size: 12px; fill: #a9c4df; letter-spacing: 0; }
+      .pill { font-family: Inter, Segoe UI, Arial, sans-serif; font-size: 12px; font-weight: 800; fill: #07111f; letter-spacing: 0; }
+      .arrow { stroke: #9fc4ec; stroke-width: 2.2; fill: none; marker-end: url(#arrowHead); }
+      .arrowSoft { stroke: #7fa5cb; stroke-width: 1.7; fill: none; marker-end: url(#arrowHeadSoft); opacity: .8; }
+      .arrowDash { stroke: #a78bfa; stroke-width: 1.8; stroke-dasharray: 6 6; fill: none; marker-end: url(#arrowHeadPurple); opacity: .9; }
+      .eventDash { stroke: #6dd6ff; stroke-width: 1.4; stroke-dasharray: 4 7; fill: none; marker-end: url(#arrowHeadCyan); opacity: .65; }
+      .futureArrow { stroke: #9aa8ba; stroke-width: 1.5; stroke-dasharray: 5 6; fill: none; marker-end: url(#arrowHeadFuture); opacity: .65; }
+    </style>
+    <marker id="arrowHead" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto" markerUnits="strokeWidth">
+      <path d="M0,0 L8,3 L0,6 Z" fill="#9fc4ec"/>
+    </marker>
+    <marker id="arrowHeadSoft" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto" markerUnits="strokeWidth">
+      <path d="M0,0 L8,3 L0,6 Z" fill="#7fa5cb"/>
+    </marker>
+    <marker id="arrowHeadPurple" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto" markerUnits="strokeWidth">
+      <path d="M0,0 L8,3 L0,6 Z" fill="#a78bfa"/>
+    </marker>
+    <marker id="arrowHeadCyan" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto" markerUnits="strokeWidth">
+      <path d="M0,0 L8,3 L0,6 Z" fill="#6dd6ff"/>
+    </marker>
+    <marker id="arrowHeadFuture" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto" markerUnits="strokeWidth">
+      <path d="M0,0 L8,3 L0,6 Z" fill="#9aa8ba"/>
+    </marker>
+  </defs>
+
+  <rect class="bg" x="0" y="0" width="1600" height="900"/>
+
+  <text class="title" x="58" y="68">FlowOps AI</text>
+  <text class="subtitle" x="58" y="103">Agentic Document Operations Architecture</text>
+  <text class="minor" x="58" y="130">Current MVP Architecture + Production Target</text>
+
+  <rect class="panel" x="38" y="162" width="1094" height="704" rx="18"/>
+  <text class="section" x="62" y="198">CURRENT MVP — IMPLEMENTED</text>
+
+  <rect class="panelFuture" x="1156" y="162" width="406" height="704" rx="18"/>
+  <text class="sectionFuture" x="1180" y="198">PRODUCTION TARGET</text>
+  <text class="labelSmall" x="1180" y="219">NOT YET IMPLEMENTED</text>
+
+  <!-- Current MVP flow -->
+  <rect class="box" x="70" y="236" width="150" height="70"/>
+  <text class="label" x="95" y="263">Business</text>
+  <text class="label" x="91" y="282">Document / PDF</text>
+
+  <rect class="box" x="258" y="236" width="150" height="70"/>
+  <text class="label" x="281" y="267">Web Dashboard</text>
+  <text class="label2" x="300" y="286">apps/web</text>
+
+  <rect class="box" x="446" y="236" width="150" height="70"/>
+  <text class="label" x="493" y="267">FastAPI</text>
+  <text class="label2" x="484" y="286">apps/api</text>
+
+  <rect class="box" x="634" y="236" width="150" height="70"/>
+  <text class="label" x="666" y="267">JobProcessor</text>
+  <text class="label2" x="684" y="286">processor</text>
+
+  <rect class="google" x="822" y="226" width="190" height="90"/>
+  <rect x="842" y="241" width="55" height="20" rx="10" fill="#62a8ff"/>
+  <text class="pill" x="854" y="256">GOOGLE</text>
+  <text class="label" x="843" y="282">Google ADK</text>
+  <text class="label2" x="843" y="300">FlowOpsAdkOrchestrator</text>
+
+  <path class="arrow" d="M220 271 H258"/>
+  <path class="arrow" d="M408 271 H446"/>
+  <path class="arrow" d="M596 271 H634"/>
+  <path class="arrow" d="M784 271 H822"/>
+
+  <rect class="lane" x="70" y="354" width="1030" height="118" rx="14"/>
+  <text class="label2" x="92" y="381">Agentic extraction and validation</text>
+
+  <rect class="box" x="104" y="398" width="150" height="52"/>
+  <text class="label" x="129" y="429">DocumentAgent</text>
+
+  <rect class="gemini" x="314" y="388" width="172" height="72"/>
+  <rect x="334" y="402" width="55" height="20" rx="10" fill="#a78bfa"/>
+  <text class="pill" x="346" y="417">GEMINI</text>
+  <text class="label" x="334" y="442">Gemini 3.6 Flash</text>
+
+  <rect class="boxSmall" x="536" y="398" width="148" height="52"/>
+  <text class="label" x="559" y="429">Structured Data</text>
+
+  <rect class="box" x="732" y="398" width="150" height="52"/>
+  <text class="label" x="757" y="429">ValidationAgent</text>
+
+  <rect class="decision" x="930" y="388" width="150" height="72"/>
+  <text class="label" x="958" y="417">DecisionAgent</text>
+  <text class="label2" x="969" y="438">route outcome</text>
+
+  <rect class="boxSmall" x="316" y="486" width="170" height="48"/>
+  <text class="label2" x="337" y="509">Local Parser Fallback</text>
+  <text class="labelSmall" x="338" y="526">if API/quota fails</text>
+
+  <path class="arrow" d="M917 316 V338 H179 V398"/>
+  <path class="arrow" d="M254 424 H314"/>
+  <path class="arrow" d="M486 424 H536"/>
+  <path class="arrow" d="M684 424 H732"/>
+  <path class="arrow" d="M882 424 H930"/>
+  <path class="arrowDash" d="M400 460 V486"/>
+  <path class="arrowSoft" d="M486 510 C510 510 511 448 536 434"/>
+
+  <rect class="lane" x="70" y="562" width="1030" height="164" rx="14"/>
+  <text class="label2" x="92" y="589">Decision outcomes and operational controls</text>
+
+  <rect class="success" x="104" y="620" width="150" height="64"/>
+  <text class="label" x="141" y="647">APPROVED</text>
+  <text class="label2" x="145" y="668">Mock ERP</text>
+
+  <rect class="review" x="330" y="604" width="176" height="88"/>
+  <text class="label" x="357" y="631">HUMAN REVIEW</text>
+  <text class="label2" x="352" y="652">Global Queue</text>
+  <text class="labelSmall" x="350" y="671">Correction / Reject</text>
+
+  <rect class="boxSmall" x="558" y="620" width="142" height="64"/>
+  <text class="label" x="583" y="647">Revalidation</text>
+  <text class="label2" x="584" y="668">when applicable</text>
+
+  <rect class="duplicate" x="780" y="604" width="178" height="88"/>
+  <text class="label" x="824" y="631">DUPLICATE</text>
+  <text class="label2" x="806" y="652">DUPLICATE_BLOCKED</text>
+  <text class="labelSmall" x="813" y="671">No duplicate ERP record</text>
+
+  <rect class="boxSmall" x="986" y="620" width="82" height="64"/>
+  <text class="label" x="1003" y="650">Reject</text>
+  <text class="label2" x="1001" y="669">REJECTED</text>
+
+  <path class="arrow" d="M1005 460 V548 H179 V620"/>
+  <path class="arrow" d="M1005 548 H418 V604"/>
+  <path class="arrow" d="M506 648 H558"/>
+  <path class="arrowSoft" d="M629 620 C629 555 807 520 807 450"/>
+  <path class="arrow" d="M1005 548 H869 V604"/>
+  <path class="arrowSoft" d="M506 668 H986"/>
+
+  <text class="labelSmall" x="791" y="584">CNPJ + invoice_number → Duplicate Check</text>
+
+  <rect class="audit" x="70" y="766" width="318" height="72"/>
+  <text class="label" x="105" y="794">ReportingAgent + Audit Trail</text>
+  <text class="label2" x="105" y="816">workflow events and metrics</text>
+
+  <rect class="store" x="456" y="756" width="294" height="92"/>
+  <text class="label" x="524" y="785">CURRENT MVP PERSISTENCE</text>
+  <text class="label2" x="494" y="810">LocalStore → state.json → state.json.bak</text>
+  <text class="label2" x="534" y="831">uploads/ → local PDF files</text>
+
+  <path class="eventDash" d="M917 316 C870 710 340 722 246 766"/>
+  <path class="eventDash" d="M1005 460 C1008 660 468 710 276 766"/>
+  <path class="eventDash" d="M179 684 C190 720 204 742 222 766"/>
+  <path class="eventDash" d="M418 692 C370 722 316 744 252 766"/>
+  <path class="eventDash" d="M869 692 C660 726 496 752 388 796"/>
+  <path class="arrowSoft" d="M388 802 H456"/>
+
+  <!-- Production target -->
+  <rect class="futureBox" x="1188" y="246" width="142" height="108"/>
+  <text class="label" x="1232" y="273">INGRESS</text>
+  <text class="label2" x="1224" y="298">Gmail</text>
+  <text class="label2" x="1220" y="318">Outlook</text>
+  <text class="label2" x="1199" y="338">WhatsApp / API</text>
+
+  <rect class="futureBox" x="1384" y="246" width="142" height="108"/>
+  <text class="label" x="1424" y="273">RUNTIME</text>
+  <text class="label2" x="1421" y="303">Cloud Run</text>
+  <text class="label2" x="1415" y="326">Google ADK</text>
+
+  <rect class="futureBox" x="1188" y="420" width="142" height="108"/>
+  <text class="label" x="1238" y="447">STATE</text>
+  <text class="label2" x="1219" y="478">Firestore</text>
+  <text class="label2" x="1205" y="501">Cloud Storage</text>
+
+  <rect class="futureBox" x="1384" y="420" width="142" height="108"/>
+  <text class="label" x="1410" y="447">DESTINATIONS</text>
+  <text class="label2" x="1401" y="478">Production ERP</text>
+  <text class="label2" x="1400" y="501">Accounting / Finance</text>
+
+  <rect class="futureBox" x="1286" y="594" width="142" height="108"/>
+  <text class="label" x="1321" y="621">OPERATIONS</text>
+  <text class="label2" x="1313" y="652">Auth / Access</text>
+  <text class="label2" x="1310" y="675">Observability</text>
+
+  <path class="futureArrow" d="M1330 300 H1384"/>
+  <path class="futureArrow" d="M1455 354 V420"/>
+  <path class="futureArrow" d="M1384 474 H1330"/>
+  <path class="futureArrow" d="M1455 528 C1455 570 1428 598 1428 648"/>
+  <path class="futureArrow" d="M1259 528 C1259 570 1286 598 1286 648"/>
+
+  <text class="labelSmall" x="1190" y="764">Future services are intentionally separated, dashed,</text>
+  <text class="labelSmall" x="1190" y="783">and marked as not implemented in RC1.</text>
+  <text class="labelSmall" x="1190" y="812">Current MVP remains local: FastAPI + ADK + Gemini + LocalStore.</text>
+</svg>
