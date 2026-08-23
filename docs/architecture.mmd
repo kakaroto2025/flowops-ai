@@ -1,0 +1,78 @@
+flowchart TD
+    subgraph Input["INPUT"]
+        PDF["Business Document / PDF"]
+    end
+
+    subgraph Application["APPLICATION"]
+        Web["Web Dashboard<br/>apps/web"]
+        API["FastAPI<br/>apps/api/main.py"]
+        Processor["JobProcessor<br/>apps/api/processor.py"]
+        Intake["IntakeAgent<br/>agents/intake/agent.py"]
+    end
+
+    subgraph Agentic["AGENTIC WORKFLOW"]
+        ADK["Google ADK<br/>FlowOpsAdkOrchestrator<br/>agents/adk/orchestrator.py"]
+        Document["DocumentAgent<br/>agents/document/agent.py"]
+        Gemini["Gemini 3.6 Flash<br/>Structured extraction"]
+        Fallback["Local Parser Fallback<br/>tools/documents/extractor.py"]
+        Structured["Structured invoice data"]
+        Validation["ValidationAgent<br/>Deterministic rules"]
+        Decision["DecisionAgent<br/>Decision / Action"]
+    end
+
+    subgraph Actions["DECISION / ACTIONS"]
+        ERP["APPROVED<br/>Mock ERP record"]
+        Review["HUMAN_REVIEW<br/>Global Human Review Queue"]
+        Operator["Operator correction / rejection"]
+        Revalidate["Revalidation"]
+        Duplicate["DUPLICATE<br/>DUPLICATE_BLOCKED<br/>No duplicate ERP record"]
+    end
+
+    subgraph StateAudit["STATE & AUDIT"]
+        Reporting["ReportingAgent<br/>Metrics / Reports"]
+        Audit["Audit Trail<br/>AgentEvent records"]
+        Store["LocalStore<br/>shared/models/store.py"]
+        State["local_data/state.json"]
+        Backup["local_data/state.json.bak"]
+        Uploads["local_data/uploads/<br/>local PDF files"]
+    end
+
+    PDF --> Web
+    Web --> API
+    API --> Processor
+    Processor --> Intake
+    Processor --> ADK
+    ADK --> Document
+    Document --> Gemini
+    Gemini --> Structured
+    Document -. "Gemini unavailable / quota / invalid response" .-> Fallback
+    Fallback --> Structured
+    Structured --> Validation
+    Validation --> Decision
+
+    Decision --> ERP
+    Decision --> Review
+    Review --> Operator
+    Operator --> Revalidate
+    Revalidate --> Validation
+    Operator --> Reject["REJECTED"]
+    Decision --> Duplicate
+
+    ADK -. events .-> Audit
+    Document -. events .-> Audit
+    Validation -. events .-> Audit
+    Decision -. events .-> Audit
+    Review -. events .-> Audit
+    ERP -. events .-> Audit
+    Duplicate -. events .-> Audit
+
+    Decision --> Reporting
+    Reporting --> Audit
+    Audit --> Store
+    ERP --> Store
+    Review --> Store
+    Duplicate --> Store
+    Intake --> Store
+    Store --> State
+    State --> Backup
+    API --> Uploads

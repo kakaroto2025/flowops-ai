@@ -1,0 +1,172 @@
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>FlowOps AI</title>
+    <link rel="stylesheet" href="/assets/styles.css" />
+  </head>
+  <body>
+    <main class="shell">
+      <header class="topbar">
+        <div>
+          <p class="eyebrow">AI Workforce for Document Operations</p>
+          <h1>FlowOps AI</h1>
+        </div>
+        <div class="actions">
+          <span id="apiStatus" class="status">API</span>
+          <button id="resetBtn" class="button secondary" type="button">Reset</button>
+          <button id="runDemoBtn" class="button primary" type="button">Run Demo</button>
+        </div>
+      </header>
+
+      <section class="upload-panel" aria-label="Upload de documentos">
+        <div>
+          <h2>Entrada de Documentos</h2>
+          <p>Selecione PDFs locais para criar um job real pelo portal.</p>
+        </div>
+        <div class="upload-actions">
+          <input id="pdfInput" class="file-input" type="file" accept="application/pdf,.pdf" multiple />
+          <button id="processUploadBtn" class="button upload" type="button" disabled>Process Upload</button>
+        </div>
+        <div id="selectedFiles" class="selected-files">Nenhum arquivo selecionado.</div>
+      </section>
+
+      <section class="overview" aria-label="Resumo operacional">
+        <article class="metric">
+          <span>Documentos</span>
+          <strong id="documentsProcessed">--</strong>
+        </article>
+        <article class="metric">
+          <span>Sucesso</span>
+          <strong id="successRate">--</strong>
+        </article>
+        <article class="metric">
+          <span>ERP</span>
+          <strong id="erpRecords">--</strong>
+        </article>
+        <article class="metric warning">
+          <span>Revisao Humana</span>
+          <strong id="humanReviews">--</strong>
+        </article>
+      </section>
+
+      <section class="section-title" aria-label="Job atual">
+        <div>
+          <h2>Job Atual</h2>
+          <p>Metricas, documentos, revisoes e audit trail do job selecionado.</p>
+        </div>
+      </section>
+
+      <section class="layout">
+        <article class="panel documents-panel">
+          <div class="panel-header">
+            <div>
+              <h2>Documentos</h2>
+              <p id="jobMeta">Nenhum job carregado</p>
+            </div>
+            <span id="jobStatus" class="pill muted">aguardando</span>
+          </div>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Arquivo</th>
+                  <th>Status</th>
+                  <th>Retry</th>
+                  <th>Documento</th>
+                </tr>
+              </thead>
+              <tbody id="documentsTable">
+                <tr>
+                  <td colspan="4" class="empty">Clique em Run Demo para processar os PDFs da Alfa Contabilidade.</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </article>
+
+        <article class="panel">
+          <div class="panel-header">
+            <div>
+              <h2>Fila Global de Revisao</h2>
+              <p>Excecoes abertas em todos os jobs</p>
+            </div>
+          </div>
+          <div id="reviewList" class="stack">
+            <div class="empty-card">Sem revisoes abertas.</div>
+          </div>
+        </article>
+      </section>
+
+      <section class="panel history-panel" aria-label="Historico de jobs">
+        <div class="panel-header">
+          <div>
+            <h2>Historico de Jobs</h2>
+            <p>Clique em um job para visualizar documentos e audit trail.</p>
+          </div>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Job</th>
+                <th>Data</th>
+                <th>Docs</th>
+                <th>Status</th>
+                <th>Aprovados</th>
+                <th>Human Review</th>
+                <th>Rejeitados</th>
+              </tr>
+            </thead>
+            <tbody id="jobsHistoryTable">
+              <tr>
+                <td colspan="7" class="empty">Nenhum job processado.</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <section class="layout lower">
+        <article class="panel">
+          <div class="panel-header">
+            <div>
+              <h2>Timeline dos Agentes</h2>
+              <p>Audit trail completo da execucao</p>
+            </div>
+          </div>
+          <div id="eventsList" class="timeline">
+            <div class="empty-card">Sem eventos ainda.</div>
+          </div>
+        </article>
+
+        <article class="panel">
+          <div class="panel-header">
+            <div>
+              <h2>Mock ERP Global</h2>
+              <p>Todos os registros aprovados</p>
+            </div>
+          </div>
+          <div class="table-wrap compact">
+            <table>
+              <thead>
+                <tr>
+                  <th>Nota</th>
+                  <th>CNPJ</th>
+                  <th>Valor</th>
+                </tr>
+              </thead>
+              <tbody id="erpTable">
+                <tr>
+                  <td colspan="3" class="empty">Nenhum registro enviado.</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </article>
+      </section>
+    </main>
+    <script src="/assets/app.js?v=global-state-20260819"></script>
+  </body>
+</html>
