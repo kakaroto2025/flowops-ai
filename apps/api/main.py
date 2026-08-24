@@ -3,7 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from fastapi import FastAPI, File, HTTPException, UploadFile
+from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
@@ -58,19 +58,22 @@ def reset_state() -> dict[str, str]:
 
 
 @app.post("/jobs/demo")
-def create_demo_job() -> dict[str, Any]:
-    job = processor.create_demo_job()
+def create_demo_job(processing_region: str = "AUTO") -> dict[str, Any]:
+    job = processor.create_demo_job(processing_region=processing_region)
     return job.to_dict()
 
 
 @app.post("/jobs/demo/run")
-def create_and_run_demo_job() -> dict[str, Any]:
-    job = processor.create_demo_job()
+def create_and_run_demo_job(processing_region: str = "AUTO") -> dict[str, Any]:
+    job = processor.create_demo_job(processing_region=processing_region)
     return processor.run_job(job.id)
 
 
 @app.post("/jobs/upload/run")
-async def upload_and_run_job(files: list[UploadFile] = File(...)) -> dict[str, Any]:
+async def upload_and_run_job(
+    files: list[UploadFile] = File(...),
+    processing_region: str = Form("AUTO"),
+) -> dict[str, Any]:
     if not files:
         raise HTTPException(status_code=400, detail="no_files_uploaded")
 
@@ -89,7 +92,7 @@ async def upload_and_run_job(files: list[UploadFile] = File(...)) -> dict[str, A
         destination.write_bytes(await upload.read())
         saved_files.append(destination)
 
-    job = processor.create_upload_job(saved_files)
+    job = processor.create_upload_job(saved_files, processing_region=normalize_region(processing_region))
     return await run_in_threadpool(processor.run_job, job.id)
 
 
@@ -171,3 +174,4 @@ def reject_review(review_id: str, payload: RejectReviewRequest | None = None) ->
 def sample_files() -> list[str]:
     sample_dir = Path("sample_data/alfa_contabilidade")
     return [path.name for path in sorted(sample_dir.glob("*.pdf"))]
+from tools.documents.normalization import normalize_region

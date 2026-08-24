@@ -157,7 +157,7 @@ class VerticalSliceTests(unittest.TestCase):
         self.assertEqual(extraction.company_name, "ORION TECNOLOGIA EMPRESARIAL LTDA")
         self.assertEqual(extraction.cnpj, "31.415.926/0001-71")
         self.assertEqual(extraction.invoice_number, "000145781")
-        self.assertEqual(extraction.issue_date, "14/08/2026")
+        self.assertEqual(extraction.issue_date, "2026-08-14")
         self.assertEqual(extraction.total_amount, 13950.0)
 
     def test_nf_ficticia_invoice_number_is_not_misread_as_ta(self):

@@ -2,11 +2,39 @@ from __future__ import annotations
 
 from agents.base import BaseAgent
 from shared.models import Document, DocumentStatus, Extraction, HumanReview
+from tools.documents.normalization import business_key
 from tools.erp import build_erp_record
 
 
 class DecisionAgent(BaseAgent):
     name = "DecisionAgent"
+
+    def _find_duplicate(self, extraction: Extraction):
+        return self.store.find_registered_invoice(
+            extraction.cnpj,
+            extraction.invoice_number,
+            country_code=extraction.country_code,
+            tax_id=extraction.tax_id,
+            normalized_tax_id=extraction.normalized_tax_id,
+            normalized_invoice_number=extraction.normalized_invoice_number,
+        )
+
+    def _duplicate_event_data(self, extraction: Extraction, duplicate) -> dict:
+        return {
+            "duplicate_key": {
+                "business_key": business_key(extraction),
+                "country_code": extraction.country_code,
+                "tax_id_type": extraction.tax_id_type,
+                "tax_id": extraction.tax_id,
+                "cnpj": extraction.cnpj,
+                "invoice_number": extraction.invoice_number,
+            },
+            "original_job_id": duplicate.job_id,
+            "original_document_id": duplicate.document_id,
+            "original_erp_record_id": duplicate.id,
+            "original_total_amount": duplicate.total_amount,
+            "current_total_amount": extraction.total_amount,
+        }
 
     def decide(self, document: Document, extraction: Extraction, validation: dict) -> str:
         if validation["retry_recommended"] and document.retry_count < 1:
@@ -25,7 +53,7 @@ class DecisionAgent(BaseAgent):
             return "RETRY"
 
         if "duplicate_invoice" in validation.get("errors", []):
-            duplicate = self.store.find_registered_invoice(extraction.cnpj, extraction.invoice_number)
+            duplicate = self._find_duplicate(extraction)
             if duplicate:
                 self.store.update_document(document.id, status=DocumentStatus.DUPLICATE_BLOCKED)
                 self.event(
@@ -33,17 +61,7 @@ class DecisionAgent(BaseAgent):
                     "DUPLICATE_DETECTED",
                     "Duplicate invoice detected before mock ERP registration.",
                     document.id,
-                    {
-                        "duplicate_key": {
-                            "cnpj": extraction.cnpj,
-                            "invoice_number": extraction.invoice_number,
-                        },
-                        "original_job_id": duplicate.job_id,
-                        "original_document_id": duplicate.document_id,
-                        "original_erp_record_id": duplicate.id,
-                        "original_total_amount": duplicate.total_amount,
-                        "current_total_amount": extraction.total_amount,
-                    },
+                    self._duplicate_event_data(extraction, duplicate),
                 )
                 return "DUPLICATE_BLOCKED"
 
@@ -66,7 +84,7 @@ class DecisionAgent(BaseAgent):
             )
             return "HUMAN_REVIEW_REQUIRED"
 
-        duplicate = self.store.find_registered_invoice(extraction.cnpj, extraction.invoice_number)
+        duplicate = self._find_duplicate(extraction)
         if duplicate:
             self.store.update_document(document.id, status=DocumentStatus.DUPLICATE_BLOCKED)
             self.event(
@@ -74,17 +92,7 @@ class DecisionAgent(BaseAgent):
                 "DUPLICATE_DETECTED",
                 "Duplicate invoice detected before mock ERP registration.",
                 document.id,
-                {
-                    "duplicate_key": {
-                        "cnpj": extraction.cnpj,
-                        "invoice_number": extraction.invoice_number,
-                    },
-                    "original_job_id": duplicate.job_id,
-                    "original_document_id": duplicate.document_id,
-                    "original_erp_record_id": duplicate.id,
-                    "original_total_amount": duplicate.total_amount,
-                    "current_total_amount": extraction.total_amount,
-                },
+                self._duplicate_event_data(extraction, duplicate),
             )
             return "DUPLICATE_BLOCKED"
 

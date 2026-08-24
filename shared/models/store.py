@@ -5,15 +5,21 @@ import logging
 import os
 import shutil
 import threading
-from dataclasses import asdict
+from dataclasses import asdict, fields
 from json import JSONDecodeError
 from pathlib import Path
 from typing import Any
 
 from .entities import AgentEvent, Document, ERPRecord, Extraction, HumanReview, Job, utc_now
+from tools.documents.normalization import business_key, normalize_extraction_payload
 
 
 logger = logging.getLogger(__name__)
+
+
+def _filter_dataclass_payload(model: type, payload: dict[str, Any]) -> dict[str, Any]:
+    allowed = {field.name for field in fields(model)}
+    return {key: value for key, value in payload.items() if key in allowed}
 
 
 def _normalize_business_key(value: str | None) -> str:
@@ -82,12 +88,54 @@ class LocalStore:
 
     def _load_payload(self, payload: dict[str, Any]) -> None:
         self._counters = payload.get("counters", {})
-        self.jobs = {k: Job(**v) for k, v in payload.get("jobs", {}).items()}
-        self.documents = {k: Document(**v) for k, v in payload.get("documents", {}).items()}
-        self.extractions = {k: Extraction(**v) for k, v in payload.get("extractions", {}).items()}
+        self.jobs = {k: Job(**self._compatible_job_payload(v)) for k, v in payload.get("jobs", {}).items()}
+        self.documents = {k: Document(**self._compatible_document_payload(v)) for k, v in payload.get("documents", {}).items()}
+        self.extractions = {k: Extraction(**self._compatible_extraction_payload(v)) for k, v in payload.get("extractions", {}).items()}
         self.events = {k: AgentEvent(**v) for k, v in payload.get("events", {}).items()}
-        self.human_reviews = {k: HumanReview(**v) for k, v in payload.get("human_reviews", {}).items()}
-        self.erp_records = {k: ERPRecord(**v) for k, v in payload.get("erp_records", {}).items()}
+        self.human_reviews = {
+            k: HumanReview(**self._compatible_human_review_payload(v)) for k, v in payload.get("human_reviews", {}).items()
+        }
+        self.erp_records = {k: ERPRecord(**self._compatible_erp_payload(v)) for k, v in payload.get("erp_records", {}).items()}
+
+    def _compatible_job_payload(self, payload: dict[str, Any]) -> dict[str, Any]:
+        return _filter_dataclass_payload(Job, {"processing_region": "AUTO", **payload})
+
+    def _compatible_document_payload(self, payload: dict[str, Any]) -> dict[str, Any]:
+        return _filter_dataclass_payload(Document, {"processing_region": "AUTO", **payload})
+
+    def _compatible_extraction_payload(self, payload: dict[str, Any]) -> dict[str, Any]:
+        return _filter_dataclass_payload(
+            Extraction,
+            normalize_extraction_payload(payload, processing_region=payload.get("country_code") or "AUTO"),
+        )
+
+    def _compatible_human_review_payload(self, payload: dict[str, Any]) -> dict[str, Any]:
+        suggested_fields = payload.get("suggested_fields")
+        if isinstance(suggested_fields, dict):
+            payload = {
+                **payload,
+                "suggested_fields": normalize_extraction_payload(
+                    suggested_fields,
+                    processing_region=suggested_fields.get("country_code") or "AUTO",
+                ),
+            }
+        return _filter_dataclass_payload(HumanReview, payload)
+
+    def _compatible_erp_payload(self, payload: dict[str, Any]) -> dict[str, Any]:
+        normalized = normalize_extraction_payload(payload, processing_region=payload.get("country_code") or "AUTO")
+        return _filter_dataclass_payload(
+            ERPRecord,
+            {
+                **payload,
+                "country_code": payload.get("country_code") or normalized.get("country_code"),
+                "tax_id": payload.get("tax_id") or normalized.get("tax_id"),
+                "tax_id_type": payload.get("tax_id_type") or normalized.get("tax_id_type"),
+                "normalized_tax_id": payload.get("normalized_tax_id") or normalized.get("normalized_tax_id"),
+                "normalized_invoice_number": payload.get("normalized_invoice_number")
+                or normalized.get("normalized_invoice_number"),
+                "currency": payload.get("currency") or normalized.get("currency"),
+            },
+        )
 
     def _atomic_write_json(self, payload: dict[str, Any]) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)
@@ -161,6 +209,13 @@ class LocalStore:
         return review
 
     def add_erp_record(self, record: ERPRecord) -> ERPRecord:
+        normalized = normalize_extraction_payload(record.to_dict(), processing_region=record.country_code or "AUTO")
+        record.country_code = record.country_code or normalized.get("country_code")
+        record.tax_id = record.tax_id or normalized.get("tax_id")
+        record.tax_id_type = record.tax_id_type or normalized.get("tax_id_type")
+        record.normalized_tax_id = record.normalized_tax_id or normalized.get("normalized_tax_id")
+        record.normalized_invoice_number = record.normalized_invoice_number or normalized.get("normalized_invoice_number")
+        record.currency = record.currency or normalized.get("currency")
         self.erp_records[record.id] = record
         self.save()
         return record
@@ -200,16 +255,30 @@ class LocalStore:
     def erp_records_for_job(self, job_id: str) -> list[ERPRecord]:
         return [record for record in self.erp_records.values() if record.job_id == job_id]
 
-    def find_registered_invoice(self, cnpj: str | None, invoice_number: str | None) -> ERPRecord | None:
-        cnpj_key = _normalize_business_key(cnpj)
-        invoice_key = _normalize_business_key(invoice_number)
-        if not cnpj_key or not invoice_key:
+    def find_registered_invoice(
+        self,
+        cnpj: str | None = None,
+        invoice_number: str | None = None,
+        *,
+        country_code: str | None = None,
+        tax_id: str | None = None,
+        normalized_tax_id: str | None = None,
+        normalized_invoice_number: str | None = None,
+    ) -> ERPRecord | None:
+        lookup_key = business_key(
+            {
+                "country_code": country_code or ("BR" if cnpj else None),
+                "tax_id": tax_id or cnpj,
+                "cnpj": cnpj,
+                "invoice_number": invoice_number,
+                "normalized_tax_id": normalized_tax_id,
+                "normalized_invoice_number": normalized_invoice_number,
+            }
+        )
+        if not lookup_key:
             return None
         for record in self.erp_records.values():
-            if (
-                _normalize_business_key(record.cnpj) == cnpj_key
-                and _normalize_business_key(record.invoice_number) == invoice_key
-            ):
+            if business_key(record) == lookup_key:
                 return record
         return None
 

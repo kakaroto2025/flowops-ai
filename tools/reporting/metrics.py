@@ -21,6 +21,22 @@ def build_dashboard(store: LocalStore, job_id: str) -> dict[str, Any]:
     )
     success_rate = (len(erp_records) / processed * 100) if processed else 0.0
 
+    document_rows = []
+    for doc in documents:
+        row = doc.to_dict()
+        extraction = store.extraction_for_document(doc.id)
+        if extraction:
+            row.update(
+                {
+                    "country_code": extraction.country_code,
+                    "tax_id_type": extraction.tax_id_type,
+                    "tax_id": extraction.tax_id,
+                    "invoice_number": extraction.invoice_number,
+                    "currency": extraction.currency,
+                }
+            )
+        document_rows.append(row)
+
     return {
         "job": job.to_dict(),
         "kpis": {
@@ -31,7 +47,7 @@ def build_dashboard(store: LocalStore, job_id: str) -> dict[str, Any]:
             "erp_records": len(erp_records),
         },
         "status_counts": dict(status_counts),
-        "documents": [doc.to_dict() for doc in documents],
+        "documents": document_rows,
         "recent_events": [event.to_dict() for event in events[-25:]],
         "human_reviews": [review.to_dict() for review in reviews],
         "erp_records": [record.to_dict() for record in erp_records],

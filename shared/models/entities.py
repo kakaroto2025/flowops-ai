@@ -38,6 +38,7 @@ class Job:
     id: str
     source: str
     status: str = JobStatus.CREATED
+    processing_region: str = "AUTO"
     document_count: int = 0
     processed_count: int = 0
     approved_count: int = 0
@@ -57,6 +58,7 @@ class Document:
     file_name: str
     storage_path: str
     status: str = DocumentStatus.UPLOADED
+    processing_region: str = "AUTO"
     retry_count: int = 0
     created_at: str = field(default_factory=utc_now)
     updated_at: str = field(default_factory=utc_now)
@@ -76,6 +78,13 @@ class Extraction:
     issue_date: str | None
     total_amount: float | None
     confidence: float
+    country_code: str | None = None
+    country_confidence: float = 0.0
+    tax_id: str | None = None
+    tax_id_type: str | None = None
+    normalized_tax_id: str | None = None
+    normalized_invoice_number: str | None = None
+    currency: str | None = None
     warnings: list[str] = field(default_factory=list)
     created_at: str = field(default_factory=utc_now)
 
@@ -122,6 +131,14 @@ class ERPRecord:
     invoice_number: str
     cnpj: str
     total_amount: float
+    company_name: str | None = None
+    issue_date: str | None = None
+    country_code: str | None = None
+    tax_id: str | None = None
+    tax_id_type: str | None = None
+    normalized_tax_id: str | None = None
+    normalized_invoice_number: str | None = None
+    currency: str | None = None
     status: str = "REGISTERED"
     registered_at: str = field(default_factory=utc_now)
 

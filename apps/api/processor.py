@@ -10,6 +10,7 @@ from agents.reporting import ReportingAgent
 from agents.validation import ValidationAgent
 from shared.models import AgentEvent, DocumentStatus, Job, LocalStore
 from shared.models.entities import utc_now
+from tools.documents.normalization import normalize_extraction_payload
 
 
 class JobProcessor:
@@ -28,17 +29,17 @@ class JobProcessor:
             reporting_agent=self.reporting,
         )
 
-    def create_demo_job(self, sample_dir: str | Path = "sample_data/alfa_contabilidade") -> Job:
+    def create_demo_job(self, sample_dir: str | Path = "sample_data/alfa_contabilidade", processing_region: str = "AUTO") -> Job:
         files = sorted(Path(sample_dir).glob("*.pdf"))
         if not files:
             raise FileNotFoundError(f"No sample PDFs found in {sample_dir}")
-        return self.intake.create_job(files, source="demo_alfa_contabilidade")
+        return self.intake.create_job(files, source="demo_alfa_contabilidade", processing_region=processing_region)
 
-    def create_upload_job(self, files: list[str | Path]) -> Job:
+    def create_upload_job(self, files: list[str | Path], processing_region: str = "AUTO") -> Job:
         paths = [Path(file) for file in files]
         if not paths:
             raise ValueError("No uploaded PDFs provided")
-        return self.intake.create_job(paths, source="manual_upload")
+        return self.intake.create_job(paths, source="manual_upload", processing_region=processing_region)
 
     def run_job(self, job_id: str) -> dict:
         return self.adk_orchestrator.run_job(job_id)
@@ -65,13 +66,34 @@ class JobProcessor:
             raise ValueError("No extraction found for review document")
         if any(record.document_id == review.document_id for record in self.store.erp_records.values()):
             raise ValueError("Document already registered in ERP")
+        document = self.store.documents[review.document_id]
 
-        allowed_fields = {"cnpj", "company_name", "invoice_number", "issue_date", "total_amount"}
+        allowed_fields = {
+            "country_code",
+            "tax_id",
+            "tax_id_type",
+            "cnpj",
+            "company_name",
+            "invoice_number",
+            "issue_date",
+            "total_amount",
+            "currency",
+            "document_type",
+        }
         for key, value in corrected_fields.items():
             if key == "total_amount" and value not in (None, ""):
                 value = float(value)
             if key in allowed_fields and hasattr(extraction, key):
                 value = str(value).strip() if isinstance(value, str) else value
+                setattr(extraction, key, value)
+        if "country_code" not in corrected_fields and extraction.country_code == "UNKNOWN":
+            extraction.country_code = None
+        normalized = normalize_extraction_payload(
+            extraction.to_dict(),
+            processing_region=extraction.country_code or document.processing_region,
+        )
+        for key, value in normalized.items():
+            if hasattr(extraction, key):
                 setattr(extraction, key, value)
         extraction.confidence = max(extraction.confidence, 0.92)
         extraction.warnings = []
@@ -85,7 +107,6 @@ class JobProcessor:
             {"review_id": review.id, "fields": sorted(corrected_fields.keys())},
         )
 
-        document = self.store.documents[review.document_id]
         self.store.update_document(document.id, status=DocumentStatus.VALIDATING)
         validation = self.validation.validate(document, extraction)
 

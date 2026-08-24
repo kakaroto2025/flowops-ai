@@ -5,6 +5,15 @@ import unicodedata
 from pathlib import Path
 from typing import Any
 
+from tools.documents.normalization import (
+    REGION_BR,
+    REGION_US,
+    detect_country,
+    normalize_amount,
+    normalize_extraction_payload,
+    normalize_region,
+)
+
 
 def _looks_like_pdf(raw: bytes) -> bool:
     return raw.startswith(b"%PDF")
@@ -82,15 +91,7 @@ def _find_emitente_bounds(lines: list[str]) -> tuple[int, int]:
 
 
 def _parse_amount(value: str | None) -> float | None:
-    if not value:
-        return None
-    normalized = value.strip().replace("R$", "").replace(" ", "")
-    if "," in normalized:
-        normalized = normalized.replace(".", "").replace(",", ".")
-    try:
-        return float(normalized)
-    except ValueError:
-        return None
+    return normalize_amount(value)
 
 
 def _extract_emitente_field(lines: list[str], labels: set[str]) -> str | None:
@@ -102,7 +103,16 @@ def _extract_company_name(text: str, lines: list[str]) -> str | None:
     emitente_name = _extract_emitente_field(lines, {"razao social", "empresa", "company"})
     if emitente_name:
         return emitente_name
-    return _find(r"(?:Raz[aÃ£]o Social|Empresa|Company):\s*(.+)", text)
+    explicit = _find(r"(?:Raz[aÃ£]o Social|Empresa|Company|Vendor):\s*(.+)", text)
+    if explicit:
+        return explicit
+    for index, line in enumerate(lines):
+        normalized = _normalize_label(line)
+        if normalized in {"invoice", "tax invoice", "bill", "receipt"} and index > 0:
+            candidate = lines[index - 1].strip()
+            if candidate and not re.search(r"\d{2,}", candidate):
+                return candidate
+    return None
 
 
 def _extract_cnpj(text: str, lines: list[str]) -> str | None:
@@ -112,8 +122,26 @@ def _extract_cnpj(text: str, lines: list[str]) -> str | None:
     return _find(r"CNPJ:?\s*([0-9]{2}\.?[0-9]{3}\.?[0-9]{3}/?[0-9]{4}-?[0-9]{2})", text)
 
 
+def _extract_ein(text: str, lines: list[str]) -> str | None:
+    from_label = _line_after_label(
+        lines,
+        {"ein", "tax id", "tax identification number", "employer identification number"},
+    )
+    if from_label:
+        match = re.search(r"\b[0-9]{2}-[0-9]{7}\b", from_label)
+        if match:
+            return match.group(0)
+    return _find(
+        r"(?:EIN|Tax ID|Employer Identification Number|Tax Identification Number):?\s*([0-9]{2}-[0-9]{7})",
+        text,
+    )
+
+
 def _extract_invoice_number(text: str, lines: list[str]) -> str | None:
-    from_label = _line_after_label(lines, {"numero da nota", "n da nota", "no da nota", "nota", "nf", "invoice"})
+    from_label = _line_after_label(
+        lines,
+        {"numero da nota", "n da nota", "no da nota", "nota", "nf", "invoice", "invoice number", "invoice no", "invoice #"},
+    )
     if from_label:
         match = re.search(r"[A-Z0-9\-]+", from_label, flags=re.IGNORECASE)
         if match:
@@ -140,7 +168,10 @@ def _is_invoice_number_candidate(value: str | None) -> bool:
 
 
 def _extract_invoice_number(text: str, lines: list[str]) -> str | None:
-    from_label = _line_after_label(lines, {"numero da nota", "n da nota", "no da nota", "nota", "nf", "invoice"})
+    from_label = _line_after_label(
+        lines,
+        {"numero da nota", "n da nota", "no da nota", "nota", "nf", "invoice number", "invoice no", "invoice #"},
+    )
     if from_label:
         match = re.search(r"[A-Z0-9][A-Z0-9.\-]*", from_label, flags=re.IGNORECASE)
         if match and _is_invoice_number_candidate(match.group(0)):
@@ -150,7 +181,8 @@ def _extract_invoice_number(text: str, lines: list[str]) -> str | None:
         for pattern in (
             r"^\s*(?:N[º°o]\.?)\s*([A-Z0-9][A-Z0-9.\-]*)\s*$",
             r"^\s*(?:NF-e|NFE|NOTA|NOTA FISCAL).*?(?:N[º°o]\.?)\s*([A-Z0-9][A-Z0-9.\-]*)\b",
-            r"^\s*(?:Nota|NF|Invoice)\s*:\s*([A-Z0-9][A-Z0-9.\-]*)\s*$",
+            r"^\s*(?:Nota|NF|Invoice|Invoice Number|Invoice No\.?|Invoice #)\s*:\s*([A-Z0-9][A-Z0-9.\-]*)\s*$",
+            r"^\s*(?:Invoice Number|Invoice No\.?|Invoice #)\s*([A-Z0-9][A-Z0-9.\-]*)\s*$",
         ):
             match = re.search(pattern, line, flags=re.IGNORECASE)
             if match and _is_invoice_number_candidate(match.group(1)):
@@ -160,13 +192,13 @@ def _extract_invoice_number(text: str, lines: list[str]) -> str | None:
 
 
 def _extract_issue_date(text: str, lines: list[str]) -> str | None:
-    from_label = _line_after_label(lines, {"data de emissao", "data", "issue date"})
+    from_label = _line_after_label(lines, {"data de emissao", "data", "issue date", "invoice date"})
     if from_label:
-        match = re.search(r"[0-9]{2}/[0-9]{2}/[0-9]{4}|[0-9]{4}-[0-9]{2}-[0-9]{2}", from_label)
+        match = re.search(r"[0-9]{2}/[0-9]{2}/[0-9]{4}|[0-9]{2}-[0-9]{2}-[0-9]{4}|[0-9]{4}-[0-9]{2}-[0-9]{2}", from_label)
         if match:
             return match.group(0)
     return _find(
-        r"(?:Data(?: de Emiss[aÃ£]o)?|Issue Date):\s*([0-9]{2}/[0-9]{2}/[0-9]{4}|[0-9]{4}-[0-9]{2}-[0-9]{2})",
+        r"(?:Data(?: de Emiss[aÃ£]o)?|Issue Date|Invoice Date):\s*([0-9]{2}/[0-9]{2}/[0-9]{4}|[0-9]{2}-[0-9]{2}-[0-9]{4}|[0-9]{4}-[0-9]{2}-[0-9]{2})",
         text,
     )
 
@@ -180,38 +212,46 @@ def _extract_total_amount(text: str, lines: list[str]) -> float | None:
                 if amount is not None:
                     return amount
 
-    matches = re.findall(r"R\$\s*[0-9]{1,3}(?:\.[0-9]{3})*,[0-9]{2}|R\$\s*[0-9]+(?:\.[0-9]+)?", text)
+    matches = re.findall(r"R\$\s*[0-9]{1,3}(?:\.[0-9]{3})*,[0-9]{2}|R\$\s*[0-9]+(?:\.[0-9]+)?|US\$?\s*[0-9]{1,3}(?:,[0-9]{3})*\.[0-9]{2}|\$\s*[0-9]{1,3}(?:,[0-9]{3})*\.[0-9]{2}", text)
     parsed_amounts = [amount for amount in (_parse_amount(match) for match in matches) if amount is not None]
     if parsed_amounts:
         return parsed_amounts[-1]
-    return _parse_amount(_find(r"(?:Valor Total|Total|Amount):\s*(R?\$?\s*[0-9.,]+)", text))
+    return _parse_amount(_find(r"(?:Valor Total|Total Amount|Amount Due|Total|Amount):\s*(?:USD\s*)?(R?\$?\s*[0-9.,]+)", text))
 
 
-def extract_document(path: str | Path, retry_count: int = 0) -> dict[str, Any]:
+def extract_document(path: str | Path, retry_count: int = 0, processing_region: str = "AUTO") -> dict[str, Any]:
     text = read_document_text(path)
     lines = _clean_lines(text)
     warnings: list[str] = []
+    region = normalize_region(processing_region)
 
     if "ILLEGIBLE" in text:
         return {
-            "document_type": "invoice",
+            "document_type": "INVOICE",
+            "country_code": None if region == "AUTO" else region,
+            "tax_id": None,
+            "tax_id_type": None,
             "cnpj": None,
             "company_name": None,
             "invoice_number": None,
             "issue_date": None,
             "total_amount": None,
+            "currency": None,
             "confidence": 0.18,
             "warnings": ["document_unreadable"],
         }
 
-    company_name = _find(r"(?:Raz[aã]o Social|Empresa|Company):\s*(.+)", text)
+    country_hint = detect_country(text, processing_region=region)["country_code"]
+    company_name = _find(r"(?:Raz[aã]o Social|Empresa|Company|Vendor):\s*(.+)", text)
     cnpj = _find(r"CNPJ:\s*([0-9.\-/]+)", text)
-    invoice_number = _find(r"(?:Nota|NF|Invoice):\s*([A-Z0-9\-]+)", text)
-    issue_date = _find(r"(?:Data|Issue Date):\s*([0-9]{2}/[0-9]{2}/[0-9]{4}|[0-9]{4}-[0-9]{2}-[0-9]{2})", text)
-    amount = _parse_amount(_find(r"(?:Valor Total|Total|Amount):\s*(R?\$?\s*[0-9.,]+)", text))
+    ein = _extract_ein(text, lines)
+    invoice_number = _find(r"(?:Nota|NF|Invoice|Invoice Number|Invoice No\.?|Invoice #):\s*([A-Z0-9\-]+)", text)
+    issue_date = _find(r"(?:Data|Issue Date|Invoice Date):\s*([0-9]{2}/[0-9]{2}/[0-9]{4}|[0-9]{2}-[0-9]{2}-[0-9]{4}|[0-9]{4}-[0-9]{2}-[0-9]{2})", text)
+    amount = _parse_amount(_find(r"(?:Valor Total|Total Amount|Amount Due|Total|Amount):\s*(?:USD\s*)?(R?\$?\s*[0-9.,]+)", text))
 
     company_name = _extract_company_name(text, lines) or company_name
     cnpj = _extract_cnpj(text, lines) or cnpj
+    ein = _extract_ein(text, lines) or ein
     invoice_number = _extract_invoice_number(text, lines) or invoice_number
     issue_date = _extract_issue_date(text, lines) or issue_date
     amount = _extract_total_amount(text, lines) or amount
@@ -220,11 +260,34 @@ def extract_document(path: str | Path, retry_count: int = 0) -> dict[str, Any]:
         amount *= 10
         warnings.append("amount_anomaly_possible_ocr_shift")
 
+    tax_id = cnpj if country_hint == REGION_BR else ein if country_hint == REGION_US else cnpj or ein
+    tax_id_type = "CNPJ" if tax_id and tax_id == cnpj else "EIN" if tax_id and tax_id == ein else None
+    currency = "BRL" if "R$" in text or country_hint == REGION_BR else "USD" if "$" in text or "USD" in text.upper() or country_hint == REGION_US else None
+    payload = normalize_extraction_payload(
+        {
+            "document_type": "INVOICE",
+            "country_code": None if country_hint == "UNKNOWN" else country_hint,
+            "tax_id": tax_id,
+            "tax_id_type": tax_id_type,
+            "cnpj": cnpj,
+            "company_name": company_name,
+            "invoice_number": invoice_number,
+            "issue_date": issue_date,
+            "total_amount": amount,
+            "currency": currency,
+            "confidence": 0.96,
+            "warnings": warnings,
+        },
+        raw_text=text,
+        processing_region=region,
+    )
+
+    required_tax_field = "cnpj" if payload.get("country_code") == REGION_BR else "tax_id"
     missing = [
         field
         for field, value in {
             "company_name": company_name,
-            "cnpj": cnpj,
+            required_tax_field: payload.get("tax_id"),
             "invoice_number": invoice_number,
             "issue_date": issue_date,
             "total_amount": amount,
@@ -240,13 +303,6 @@ def extract_document(path: str | Path, retry_count: int = 0) -> dict[str, Any]:
         confidence -= 0.18
     confidence = max(0.05, min(0.99, confidence))
 
-    return {
-        "document_type": "invoice",
-        "cnpj": cnpj,
-        "company_name": company_name,
-        "invoice_number": invoice_number,
-        "issue_date": issue_date,
-        "total_amount": amount,
-        "confidence": round(confidence, 2),
-        "warnings": warnings,
-    }
+    payload["confidence"] = round(confidence, 2)
+    payload["warnings"] = warnings
+    return payload

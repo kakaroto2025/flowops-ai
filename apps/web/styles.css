@@ -168,6 +168,27 @@ h2 {
   gap: 10px;
 }
 
+.region-control {
+  display: grid;
+  gap: 8px;
+  min-width: 220px;
+}
+
+.region-control span {
+  color: var(--muted);
+  font-size: 12px;
+  text-transform: uppercase;
+}
+
+.region-control select {
+  min-height: 40px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: #0b1420;
+  color: var(--text);
+  padding: 8px 10px;
+}
+
 .file-input {
   min-height: 40px;
   max-width: min(520px, 100%);
@@ -253,6 +274,10 @@ h2 {
   margin-top: 18px;
 }
 
+.layout.erp-layout {
+  grid-template-columns: minmax(320px, 0.8fr) minmax(620px, 1.2fr);
+}
+
 .history-panel {
   min-height: 0;
   margin-top: 18px;
@@ -265,6 +290,79 @@ h2 {
 
 .documents-panel {
   min-width: 0;
+}
+
+.documents-panel table {
+  min-width: 760px;
+}
+
+.documents-panel th:nth-child(1),
+.documents-panel td:nth-child(1) {
+  width: 38%;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.documents-panel th:nth-child(2),
+.documents-panel td:nth-child(2) {
+  width: 170px;
+}
+
+.documents-panel th:nth-child(3),
+.documents-panel td:nth-child(3) {
+  width: 70px;
+}
+
+.documents-panel th:nth-child(4),
+.documents-panel td:nth-child(4) {
+  width: 90px;
+}
+
+.documents-panel th:nth-child(5),
+.documents-panel td:nth-child(5) {
+  width: 130px;
+  overflow-wrap: anywhere;
+}
+
+.erp-panel {
+  min-width: 0;
+}
+
+.erp-table-wrap {
+  width: 100%;
+}
+
+.erp-table {
+  min-width: 820px;
+}
+
+.erp-table th:nth-child(1),
+.erp-table td:nth-child(1) {
+  width: 190px;
+  overflow-wrap: anywhere;
+}
+
+.erp-table th:nth-child(2),
+.erp-table td:nth-child(2) {
+  width: 220px;
+  overflow-wrap: anywhere;
+}
+
+.erp-table th:nth-child(3),
+.erp-table td:nth-child(3),
+.erp-table th:nth-child(4),
+.erp-table td:nth-child(4),
+.erp-table th:nth-child(6),
+.erp-table td:nth-child(6) {
+  width: 90px;
+  white-space: nowrap;
+}
+
+.erp-table th:nth-child(5),
+.erp-table td:nth-child(5) {
+  width: 140px;
+  text-align: right;
+  white-space: nowrap;
 }
 
 .panel-header {
@@ -355,6 +453,13 @@ td {
 .review-title {
   display: grid;
   gap: 4px;
+  min-width: 0;
+}
+
+.review-title strong,
+.review-title span {
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .review-form label {
@@ -412,7 +517,10 @@ td {
 }
 
 .status-text {
+  display: inline-block;
+  max-width: 100%;
   font-weight: 700;
+  overflow-wrap: anywhere;
 }
 
 .status-registered {

@@ -2,6 +2,7 @@ const apiStatus = document.querySelector("#apiStatus");
 const runDemoBtn = document.querySelector("#runDemoBtn");
 const resetBtn = document.querySelector("#resetBtn");
 const pdfInput = document.querySelector("#pdfInput");
+const processingRegion = document.querySelector("#processingRegion");
 const processUploadBtn = document.querySelector("#processUploadBtn");
 const selectedFiles = document.querySelector("#selectedFiles");
 const jobMeta = document.querySelector("#jobMeta");
@@ -27,16 +28,16 @@ function escapeHtml(value) {
     .replaceAll("'", "&#039;");
 }
 
-function money(value) {
-  return new Intl.NumberFormat("pt-BR", {
+function money(value, currency = "USD") {
+  return new Intl.NumberFormat("en-US", {
     style: "currency",
-    currency: "BRL",
+    currency: currency || "USD",
   }).format(value || 0);
 }
 
 function dateTime(value) {
   if (!value) return "--";
-  return new Intl.DateTimeFormat("pt-BR", {
+  return new Intl.DateTimeFormat("en-US", {
     hour: "2-digit",
     minute: "2-digit",
     second: "2-digit",
@@ -45,7 +46,7 @@ function dateTime(value) {
 
 function dateFull(value) {
   if (!value) return "--";
-  return new Intl.DateTimeFormat("pt-BR", {
+  return new Intl.DateTimeFormat("en-US", {
     day: "2-digit",
     month: "2-digit",
     year: "2-digit",
@@ -66,8 +67,8 @@ function setLoading(isLoading) {
   runDemoBtn.disabled = isLoading;
   resetBtn.disabled = isLoading;
   processUploadBtn.disabled = isLoading || !pdfInput.files.length;
-  runDemoBtn.textContent = isLoading ? "Processando..." : "Run Demo";
-  processUploadBtn.textContent = isLoading ? "Processando..." : "Process Upload";
+  runDemoBtn.textContent = isLoading ? "Processing..." : "Run Demo";
+  processUploadBtn.textContent = isLoading ? "Processing..." : "Process Upload";
 }
 
 function setApiStatus(ok) {
@@ -75,11 +76,17 @@ function setApiStatus(ok) {
   apiStatus.textContent = ok ? "API online" : "API offline";
 }
 
+function selectedPdfFiles() {
+  return Array.from(pdfInput.files).sort((left, right) =>
+    left.name.localeCompare(right.name, undefined, { numeric: true, sensitivity: "base" }),
+  );
+}
+
 function renderDashboard(data) {
   currentJobId = data.job.id;
   documentsProcessed.textContent = data.kpis.documents_processed;
   successRate.textContent = `${data.kpis.success_rate}%`;
-  jobMeta.textContent = `${data.job.id} | ${data.job.document_count} documentos | ${dateTime(data.job.updated_at)}`;
+  jobMeta.textContent = `${data.job.id} | ${data.job.document_count} documents | ${data.job.processing_region || "AUTO"} | ${dateTime(data.job.updated_at)}`;
   jobStatus.textContent = data.job.status;
   jobStatus.className = data.job.status === "COMPLETED" ? "pill done" : "pill muted";
 
@@ -89,7 +96,7 @@ function renderDashboard(data) {
 
 function renderJobHistory(jobs) {
   if (!jobs.length) {
-    jobsHistoryTable.innerHTML = `<tr><td colspan="7" class="empty">Nenhum job processado.</td></tr>`;
+    jobsHistoryTable.innerHTML = `<tr><td colspan="7" class="empty">No jobs processed.</td></tr>`;
     return;
   }
 
@@ -139,7 +146,7 @@ async function loadJob(jobId) {
     setApiStatus(true);
   } catch (error) {
     setApiStatus(false);
-    jobMeta.textContent = `Erro ao carregar job: ${error.message}`;
+    jobMeta.textContent = `Job loading error: ${error.message}`;
   } finally {
     setLoading(false);
   }
@@ -147,7 +154,7 @@ async function loadJob(jobId) {
 
 function renderDocuments(documents) {
   if (!documents.length) {
-    documentsTable.innerHTML = `<tr><td colspan="4" class="empty">Nenhum documento.</td></tr>`;
+    documentsTable.innerHTML = `<tr><td colspan="5" class="empty">No documents.</td></tr>`;
     return;
   }
 
@@ -159,6 +166,7 @@ function renderDocuments(documents) {
           <td>${doc.file_name}</td>
           <td><span class="status-text ${statusClass}">${doc.status}</span></td>
           <td>${doc.retry_count}</td>
+          <td>${doc.country_code || doc.processing_region || "--"}</td>
           <td>${doc.id}</td>
         </tr>
       `;
@@ -169,7 +177,7 @@ function renderDocuments(documents) {
 function renderReviews(reviews) {
   const openReviews = reviews.filter((review) => review.status === "OPEN");
   if (!openReviews.length) {
-    reviewList.innerHTML = `<div class="empty-card">Sem revisoes abertas.</div>`;
+    reviewList.innerHTML = `<div class="empty-card">No open reviews.</div>`;
     return;
   }
 
@@ -180,32 +188,44 @@ function renderReviews(reviews) {
         <div class="review-card review-form" data-review-id="${escapeHtml(review.id)}">
           <div class="review-title">
             <strong>${escapeHtml(review.document_id)}</strong>
-            <span>${escapeHtml(review.job_id)} | ${escapeHtml(review.file_name || "sem arquivo")}</span>
+            <span>${escapeHtml(review.job_id)} | ${escapeHtml(review.file_name || "no file")}</span>
             <span>${escapeHtml(review.reason)}</span>
           </div>
           <label>
-            <span>Empresa</span>
+            <span>Country</span>
+            <input data-field="country_code" value="${escapeHtml(fields.country_code)}" />
+          </label>
+          <label>
+            <span>Company</span>
             <input data-field="company_name" value="${escapeHtml(fields.company_name)}" />
           </label>
           <label>
-            <span>CNPJ</span>
-            <input data-field="cnpj" value="${escapeHtml(fields.cnpj)}" />
+            <span>Tax ID Type</span>
+            <input data-field="tax_id_type" value="${escapeHtml(fields.tax_id_type || (fields.cnpj ? "CNPJ" : ""))}" />
           </label>
           <label>
-            <span>Nota</span>
+            <span>Tax ID</span>
+            <input data-field="tax_id" value="${escapeHtml(fields.tax_id || fields.cnpj)}" />
+          </label>
+          <label>
+            <span>Invoice Number</span>
             <input data-field="invoice_number" value="${escapeHtml(fields.invoice_number)}" />
           </label>
           <label>
-            <span>Data</span>
+            <span>Issue Date</span>
             <input data-field="issue_date" value="${escapeHtml(fields.issue_date)}" />
           </label>
           <label>
-            <span>Valor</span>
+            <span>Total Amount</span>
             <input data-field="total_amount" value="${escapeHtml(fields.total_amount)}" inputmode="decimal" />
           </label>
+          <label>
+            <span>Currency</span>
+            <input data-field="currency" value="${escapeHtml(fields.currency)}" />
+          </label>
           <div class="review-actions">
-            <button class="button primary" type="button" data-action="approve-review">Corrigir e Aprovar</button>
-            <button class="button danger" type="button" data-action="reject-review">Rejeitar</button>
+            <button class="button primary" type="button" data-action="approve-review">Correct and Approve</button>
+            <button class="button danger" type="button" data-action="reject-review">Reject</button>
           </div>
         </div>
       `;
@@ -215,7 +235,7 @@ function renderReviews(reviews) {
 
 function renderEvents(events) {
   if (!events.length) {
-    eventsList.innerHTML = `<div class="empty-card">Sem eventos ainda.</div>`;
+    eventsList.innerHTML = `<div class="empty-card">No events yet.</div>`;
     return;
   }
 
@@ -243,7 +263,7 @@ function renderEvents(events) {
 
 function renderErp(records) {
   if (!records.length) {
-    erpTable.innerHTML = `<tr><td colspan="3" class="empty">Nenhum registro enviado.</td></tr>`;
+    erpTable.innerHTML = `<tr><td colspan="6" class="empty">No records sent.</td></tr>`;
     return;
   }
 
@@ -252,8 +272,11 @@ function renderErp(records) {
       (record) => `
         <tr>
           <td>${record.invoice_number}</td>
-          <td>${record.cnpj}</td>
-          <td>${money(record.total_amount)}</td>
+          <td>${record.tax_id || record.cnpj}</td>
+          <td>${record.tax_id_type || (record.cnpj ? "CNPJ" : "--")}</td>
+          <td>${record.country_code || "--"}</td>
+          <td>${money(record.total_amount, record.currency || "USD")}</td>
+          <td>${record.currency || "--"}</td>
         </tr>
       `,
     )
@@ -263,7 +286,8 @@ function renderErp(records) {
 async function runDemo() {
   setLoading(true);
   try {
-    const data = await request("/jobs/demo/run", {
+    const region = processingRegion?.value || "AUTO";
+    const data = await request(`/jobs/demo/run?processing_region=${encodeURIComponent(region)}`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
     });
@@ -274,7 +298,7 @@ async function runDemo() {
     setApiStatus(true);
   } catch (error) {
     setApiStatus(false);
-    jobMeta.textContent = `Erro ao rodar demo: ${error.message}`;
+    jobMeta.textContent = `Demo processing error: ${error.message}`;
   } finally {
     setLoading(false);
   }
@@ -292,8 +316,8 @@ async function resetDemo() {
     successRate.textContent = "--";
     erpRecords.textContent = "--";
     humanReviews.textContent = "--";
-    jobMeta.textContent = "Nenhum job carregado";
-    jobStatus.textContent = "aguardando";
+    jobMeta.textContent = "No job loaded";
+    jobStatus.textContent = "waiting";
     jobStatus.className = "pill muted";
     renderDocuments([]);
     renderReviews([]);
@@ -312,7 +336,8 @@ async function processUpload() {
   if (!pdfInput.files.length) return;
 
   const payload = new FormData();
-  Array.from(pdfInput.files).forEach((file) => payload.append("files", file));
+  selectedPdfFiles().forEach((file) => payload.append("files", file));
+  payload.append("processing_region", processingRegion?.value || "AUTO");
 
   setLoading(true);
   try {
@@ -327,14 +352,21 @@ async function processUpload() {
     setApiStatus(true);
   } catch (error) {
     setApiStatus(false);
-    jobMeta.textContent = `Erro ao processar upload: ${error.message}`;
+    jobMeta.textContent = `Upload processing error: ${error.message}`;
   } finally {
     setLoading(false);
   }
 }
 
 function parseAmount(value) {
-  const cleaned = String(value || "").replace(/\./g, "").replace(",", ".");
+  let cleaned = String(value || "").replace(/[^0-9,.\-]/g, "");
+  if (cleaned.includes(",") && cleaned.includes(".")) {
+    cleaned = cleaned.lastIndexOf(",") > cleaned.lastIndexOf(".")
+      ? cleaned.replace(/\./g, "").replace(",", ".")
+      : cleaned.replace(/,/g, "");
+  } else if (cleaned.includes(",")) {
+    cleaned = cleaned.replace(/\./g, "").replace(",", ".");
+  }
   const amount = Number(cleaned);
   return Number.isFinite(amount) ? amount : value;
 }
@@ -361,7 +393,7 @@ async function approveReview(card) {
     setApiStatus(true);
   } catch (error) {
     setApiStatus(false);
-    jobMeta.textContent = `Erro ao corrigir revisao: ${error.message}`;
+    jobMeta.textContent = `Review approval error: ${error.message}`;
   } finally {
     setLoading(false);
   }
@@ -384,17 +416,17 @@ async function rejectReview(card) {
     setApiStatus(true);
   } catch (error) {
     setApiStatus(false);
-    jobMeta.textContent = `Erro ao rejeitar revisao: ${error.message}`;
+    jobMeta.textContent = `Review rejection error: ${error.message}`;
   } finally {
     setLoading(false);
   }
 }
 
 function renderSelectedFiles() {
-  const files = Array.from(pdfInput.files);
+  const files = selectedPdfFiles();
   processUploadBtn.disabled = files.length === 0;
   if (!files.length) {
-    selectedFiles.textContent = "Nenhum arquivo selecionado.";
+    selectedFiles.textContent = "No files selected.";
     return;
   }
   selectedFiles.innerHTML = files.map((file) => `<span>${file.name}</span>`).join("");

@@ -110,6 +110,30 @@ flowchart TD
 | Audit Trail (`AgentEvent`) | Captures workflow, extraction, validation, decision, review, duplicate, ERP, and reporting events. |
 | LocalStore (`shared/models/store.py`) | Persists jobs, documents, extractions, events, Human Reviews, ERP records, and counters to local JSON with backup support. |
 
+## Multi-Country Document Intelligence
+
+The current MVP supports a controlled `processing_region` per job:
+
+- `AUTO`: detect Brazil or United States from document content.
+- `BR`: force Brazilian validation/extraction policy.
+- `US`: force United States validation/extraction policy.
+
+`DocumentAgent` keeps the legacy `cnpj` field for backward compatibility, but stores the normalized universal document model:
+
+- `country_code`
+- `country_confidence`
+- `tax_id`
+- `tax_id_type`
+- `company_name`
+- `invoice_number`
+- `issue_date`
+- `total_amount`
+- `currency`
+- `document_type`
+- `confidence`
+
+Brazilian documents use CNPJ and BRL. United States documents use EIN/Tax ID and USD. Unknown or incomplete documents are routed to the global Human Review queue unless the operator corrects them and deterministic validation passes.
+
 ## Real Call Flow Found In Code
 
 1. `POST /jobs/upload/run` in `apps/api/main.py` saves PDFs to `local_data/uploads/`.
@@ -140,7 +164,7 @@ flowchart TD
 
 ```mermaid
 flowchart TD
-    Fields["CNPJ + invoice_number"] --> Normalize["Normalize business key"]
+    Fields["country_code + normalized_tax_id + normalized_invoice_number"] --> Normalize["Normalize business key"]
     Normalize --> Check["LocalStore.find_registered_invoice"]
     Check -->|Found| Block["DUPLICATE_BLOCKED"]
     Block --> Event["DUPLICATE_DETECTED<br/>original_job_id<br/>original_document_id<br/>original_erp_record_id"]

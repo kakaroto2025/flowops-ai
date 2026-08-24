@@ -16,11 +16,15 @@ from google.genai import types
 ROOT = Path(__file__).resolve().parents[2]
 MODEL = "gemini-3.6-flash"
 EXPECTED_KEYS = (
+    "country_code",
+    "tax_id",
+    "tax_id_type",
     "company_name",
-    "cnpj",
     "invoice_number",
     "issue_date",
     "total_amount",
+    "currency",
+    "document_type",
     "confidence",
 )
 
@@ -70,32 +74,41 @@ def load_env(path: Path | None = None) -> None:
         os.environ.setdefault(key.strip(), value.strip().strip('"').strip("'"))
 
 
-def build_prompt(fiscal_text: str) -> str:
+def build_prompt(fiscal_text: str, processing_region: str = "AUTO") -> str:
     return f"""
 Extraia os dados fiscais do texto abaixo.
 
 Responda somente com JSON valido, sem markdown e sem explicacoes.
 Use exatamente estas chaves:
 {{
+  "country_code": "",
+  "tax_id": "",
+  "tax_id_type": "",
   "company_name": "",
-  "cnpj": "",
   "invoice_number": "",
   "issue_date": "",
   "total_amount": 0.0,
+  "currency": "",
+  "document_type": "",
   "confidence": 0.0
 }}
 
 Regras:
+- processing_region solicitado: {processing_region}
+- country_code deve ser "BR", "US" ou null quando nao houver evidencia suficiente.
+- Para Brasil, tax_id_type deve ser "CNPJ" e tax_id deve ser o CNPJ do emitente.
+- Para Estados Unidos, tax_id_type deve ser "EIN" e tax_id deve ser o EIN/Tax ID do vendor.
 - Preserve zeros a esquerda em invoice_number.
 - Nunca invente campos ausentes.
 - Use null quando um campo nao estiver presente.
 - total_amount deve ser numero JSON.
 - confidence deve ser numero JSON entre 0.0 e 1.0.
-- company_name deve ser a razao social do EMITENTE, nao do destinatario.
-- cnpj deve ser o CNPJ do EMITENTE, nao do destinatario.
+- company_name deve ser a empresa emissora/vendor, nao o destinatario/customer.
+- currency deve ser BRL, USD ou null.
+- document_type deve ser INVOICE ou null.
 
 Texto fiscal:
-{fiscal_text}
+{fiscal_text[:12000]}
 """.strip()
 
 
@@ -119,6 +132,13 @@ def extract_json(raw_text: str) -> dict[str, Any]:
     if not isinstance(payload, dict):
         raise GeminiExtractionError("model_response_json_was_not_object")
 
+    if "cnpj" in payload and "tax_id" not in payload:
+        payload["tax_id"] = payload.get("cnpj")
+        payload["tax_id_type"] = payload.get("tax_id_type") or "CNPJ"
+        payload["country_code"] = payload.get("country_code") or "BR"
+        payload["currency"] = payload.get("currency") or "BRL"
+        payload["document_type"] = payload.get("document_type") or "INVOICE"
+
     missing_keys = [key for key in EXPECTED_KEYS if key not in payload]
     if missing_keys:
         raise GeminiExtractionError("model_response_missing_expected_keys")
@@ -135,7 +155,7 @@ def normalize_payload(payload: dict[str, Any]) -> dict[str, Any]:
             raise GeminiExtractionError("model_response_invalid_invoice_number_type")
         normalized["invoice_number"] = str(invoice_number)
 
-    for key in ("company_name", "cnpj", "issue_date"):
+    for key in ("country_code", "tax_id", "tax_id_type", "company_name", "issue_date", "currency", "document_type"):
         if normalized.get(key) is not None:
             normalized[key] = str(normalized[key])
 
@@ -153,22 +173,29 @@ def normalize_payload(payload: dict[str, Any]) -> dict[str, Any]:
     if confidence is not None and not 0.0 <= confidence <= 1.0:
         raise GeminiExtractionError("model_response_invalid_confidence")
 
-    normalized["document_type"] = "invoice"
+    normalized["document_type"] = str(normalized.get("document_type") or "INVOICE").upper()
+    if normalized.get("tax_id_type") == "CNPJ":
+        normalized["cnpj"] = normalized.get("tax_id")
+    else:
+        normalized["cnpj"] = None
     normalized["warnings"] = [
         f"missing_{key}"
         for key, value in {
+            "country_code": normalized.get("country_code"),
+            "tax_id": normalized.get("tax_id"),
+            "tax_id_type": normalized.get("tax_id_type"),
             "company_name": normalized.get("company_name"),
-            "cnpj": normalized.get("cnpj"),
             "invoice_number": normalized.get("invoice_number"),
             "issue_date": normalized.get("issue_date"),
             "total_amount": normalized.get("total_amount"),
+            "currency": normalized.get("currency"),
         }.items()
         if value in (None, "")
     ]
     return normalized
 
 
-def extract_with_gemini(fiscal_text: str, *, model: str = MODEL) -> dict[str, Any]:
+def extract_with_gemini(fiscal_text: str, *, model: str = MODEL, processing_region: str = "AUTO") -> dict[str, Any]:
     load_env()
     api_key = os.environ.get("GEMINI_API_KEY", "").strip()
     if not api_key or api_key == "SUA_CHAVE_REAL_AQUI":
@@ -179,7 +206,7 @@ def extract_with_gemini(fiscal_text: str, *, model: str = MODEL) -> dict[str, An
             client = genai.Client(api_key=api_key)
             chat = client.chats.create(model=model)
             response = chat.send_message(
-                build_prompt(fiscal_text),
+                build_prompt(fiscal_text, processing_region),
                 config=types.GenerateContentConfig(response_mime_type="application/json"),
             )
     except (genai_errors.ClientError, genai_errors.ServerError, genai_errors.APIError) as exc:

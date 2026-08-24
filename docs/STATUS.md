@@ -4,7 +4,7 @@ Created: 2026-08-11
 
 ## Current Phase
 
-Local vertical slice implemented.
+FlowOps AI v1 multi-country MVP implemented locally.
 
 ## Completed
 
@@ -29,13 +29,24 @@ Local vertical slice implemented.
 - real PDF text extraction implemented with pypdf
 - local sample documents created
 - vertical slice tests passing
+- Gemini 3.6 Flash integrated with local parser fallback
+- Google ADK orchestration integrated
+- global Human Review queue implemented
+- duplicate blocking implemented before Mock ERP registration
+- local persistence implemented with JSON state and backup
+- multi-country document intelligence implemented for Brazil and United States
+- processing region selector implemented: AUTO, BR, US
+- universal tax identity fields implemented while preserving legacy `cnpj`
+- BR/CNPJ and US/EIN validation policies implemented
+- cross-country duplicate protection implemented
+- 58 automated tests passing
 
 ## Next Step
 
-Add the first OCR/Gemini fallback for scanned or low-confidence documents:
+Prepare the production target without changing MVP behavior:
 
 ```text
-uploaded PDF -> pypdf text extraction -> OCR/Gemini fallback -> deterministic validation -> audit trail
+Cloud Run + Firestore + Cloud Storage + authenticated production connectors
 ```
 
 ## Current Product Decision

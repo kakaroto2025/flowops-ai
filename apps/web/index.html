@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="pt-BR">
+<html lang="en">
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
@@ -20,25 +20,33 @@
         </div>
       </header>
 
-      <section class="upload-panel" aria-label="Upload de documentos">
+      <section class="upload-panel" aria-label="Document upload">
         <div>
-          <h2>Entrada de Documentos</h2>
-          <p>Selecione PDFs locais para criar um job real pelo portal.</p>
+          <h2>Document Intake</h2>
+          <p>Select local PDFs to create a real portal job.</p>
         </div>
+        <label class="region-control" for="processingRegion">
+          <span>Processing Region</span>
+          <select id="processingRegion">
+            <option value="AUTO" selected>Auto Detect</option>
+            <option value="BR">Brazil</option>
+            <option value="US">United States</option>
+          </select>
+        </label>
         <div class="upload-actions">
           <input id="pdfInput" class="file-input" type="file" accept="application/pdf,.pdf" multiple />
           <button id="processUploadBtn" class="button upload" type="button" disabled>Process Upload</button>
         </div>
-        <div id="selectedFiles" class="selected-files">Nenhum arquivo selecionado.</div>
+        <div id="selectedFiles" class="selected-files">No files selected.</div>
       </section>
 
-      <section class="overview" aria-label="Resumo operacional">
+      <section class="overview" aria-label="Operational summary">
         <article class="metric">
-          <span>Documentos</span>
+          <span>Documents</span>
           <strong id="documentsProcessed">--</strong>
         </article>
         <article class="metric">
-          <span>Sucesso</span>
+          <span>Success</span>
           <strong id="successRate">--</strong>
         </article>
         <article class="metric">
@@ -46,15 +54,15 @@
           <strong id="erpRecords">--</strong>
         </article>
         <article class="metric warning">
-          <span>Revisao Humana</span>
+          <span>Human Review</span>
           <strong id="humanReviews">--</strong>
         </article>
       </section>
 
-      <section class="section-title" aria-label="Job atual">
+      <section class="section-title" aria-label="Current job">
         <div>
-          <h2>Job Atual</h2>
-          <p>Metricas, documentos, revisoes e audit trail do job selecionado.</p>
+          <h2>Current Job</h2>
+          <p>Metrics, documents, reviews, and audit trail for the selected job.</p>
         </div>
       </section>
 
@@ -62,24 +70,25 @@
         <article class="panel documents-panel">
           <div class="panel-header">
             <div>
-              <h2>Documentos</h2>
-              <p id="jobMeta">Nenhum job carregado</p>
+              <h2>Documents</h2>
+              <p id="jobMeta">No job loaded</p>
             </div>
-            <span id="jobStatus" class="pill muted">aguardando</span>
+            <span id="jobStatus" class="pill muted">waiting</span>
           </div>
           <div class="table-wrap">
             <table>
               <thead>
                 <tr>
-                  <th>Arquivo</th>
+                  <th>File</th>
                   <th>Status</th>
                   <th>Retry</th>
-                  <th>Documento</th>
+                  <th>Country</th>
+                  <th>Document</th>
                 </tr>
               </thead>
               <tbody id="documentsTable">
                 <tr>
-                  <td colspan="4" class="empty">Clique em Run Demo para processar os PDFs da Alfa Contabilidade.</td>
+                  <td colspan="5" class="empty">Click Run Demo to process the Alfa Contabilidade PDFs.</td>
                 </tr>
               </tbody>
             </table>
@@ -89,21 +98,21 @@
         <article class="panel">
           <div class="panel-header">
             <div>
-              <h2>Fila Global de Revisao</h2>
-              <p>Excecoes abertas em todos os jobs</p>
+              <h2>Global Human Review Queue</h2>
+              <p>Open exceptions across all jobs</p>
             </div>
           </div>
           <div id="reviewList" class="stack">
-            <div class="empty-card">Sem revisoes abertas.</div>
+            <div class="empty-card">No open reviews.</div>
           </div>
         </article>
       </section>
 
-      <section class="panel history-panel" aria-label="Historico de jobs">
+      <section class="panel history-panel" aria-label="Job history">
         <div class="panel-header">
           <div>
-            <h2>Historico de Jobs</h2>
-            <p>Clique em um job para visualizar documentos e audit trail.</p>
+            <h2>Job History</h2>
+            <p>Click a job to view documents and audit trail.</p>
           </div>
         </div>
         <div class="table-wrap">
@@ -111,33 +120,33 @@
             <thead>
               <tr>
                 <th>Job</th>
-                <th>Data</th>
+                <th>Date</th>
                 <th>Docs</th>
                 <th>Status</th>
-                <th>Aprovados</th>
+                <th>Approved</th>
                 <th>Human Review</th>
-                <th>Rejeitados</th>
+                <th>Rejected</th>
               </tr>
             </thead>
             <tbody id="jobsHistoryTable">
               <tr>
-                <td colspan="7" class="empty">Nenhum job processado.</td>
+                <td colspan="7" class="empty">No jobs processed.</td>
               </tr>
             </tbody>
           </table>
         </div>
       </section>
 
-      <section class="layout lower">
-        <article class="panel">
+      <section class="layout lower erp-layout">
+        <article class="panel erp-panel">
           <div class="panel-header">
             <div>
-              <h2>Timeline dos Agentes</h2>
-              <p>Audit trail completo da execucao</p>
+              <h2>Agent Timeline</h2>
+              <p>Complete execution audit trail</p>
             </div>
           </div>
           <div id="eventsList" class="timeline">
-            <div class="empty-card">Sem eventos ainda.</div>
+            <div class="empty-card">No events yet.</div>
           </div>
         </article>
 
@@ -145,21 +154,24 @@
           <div class="panel-header">
             <div>
               <h2>Mock ERP Global</h2>
-              <p>Todos os registros aprovados</p>
+              <p>All approved records</p>
             </div>
           </div>
-          <div class="table-wrap compact">
-            <table>
+          <div class="table-wrap compact erp-table-wrap">
+            <table class="erp-table">
               <thead>
                 <tr>
-                  <th>Nota</th>
-                  <th>CNPJ</th>
-                  <th>Valor</th>
+                  <th>Invoice</th>
+                  <th>Tax ID</th>
+                  <th>Type</th>
+                  <th>Country</th>
+                  <th>Amount</th>
+                  <th>Currency</th>
                 </tr>
               </thead>
               <tbody id="erpTable">
                 <tr>
-                  <td colspan="3" class="empty">Nenhum registro enviado.</td>
+                  <td colspan="6" class="empty">No records sent.</td>
                 </tr>
               </tbody>
             </table>
@@ -167,6 +179,6 @@
         </article>
       </section>
     </main>
-    <script src="/assets/app.js?v=global-state-20260819"></script>
+    <script src="/assets/app.js?v=global-state-multi-country-upload-20260824"></script>
   </body>
 </html>
