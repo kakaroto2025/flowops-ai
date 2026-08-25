@@ -11,12 +11,16 @@ This document describes the architecture that exists in the repository today and
 
 ```mermaid
 flowchart TD
-    subgraph Input["INPUT"]
+    subgraph Input["DOCUMENT INTAKE"]
         PDF["Business Document / PDF"]
+        Web["Web Dashboard<br/>apps/web"]
+    end
+
+    subgraph Region["PROCESSING REGION"]
+        Mode["AUTO / BR / US"]
     end
 
     subgraph Application["APPLICATION"]
-        Web["Web Dashboard<br/>apps/web"]
         API["FastAPI<br/>apps/api/main.py"]
         Processor["JobProcessor<br/>apps/api/processor.py"]
         Intake["IntakeAgent<br/>agents/intake/agent.py"]
@@ -25,19 +29,24 @@ flowchart TD
     subgraph Agentic["AGENTIC WORKFLOW"]
         ADK["Google ADK<br/>FlowOpsAdkOrchestrator<br/>agents/adk/orchestrator.py"]
         Document["DocumentAgent<br/>agents/document/agent.py"]
-        Gemini["Gemini 3.6 Flash<br/>Structured extraction"]
+        Gemini["Gemini 3.6 Flash<br/>Structured document extraction<br/>Country-aware understanding"]
         Fallback["Local Parser Fallback<br/>tools/documents/extractor.py"]
-        Structured["Structured invoice data"]
-        Validation["ValidationAgent<br/>Deterministic rules"]
+        Normalize["Country Detection + Normalization<br/>tools/documents/normalization.py"]
+        Validation["ValidationAgent<br/>Country-aware deterministic rules"]
         Decision["DecisionAgent<br/>Decision / Action"]
     end
 
+    subgraph Policies["LOCAL COUNTRY RULES"]
+        BR["Brazil Policy<br/>CNPJ<br/>BRL<br/>BR document/date rules"]
+        US["United States Policy<br/>EIN / Tax ID<br/>USD<br/>US invoice/date rules"]
+    end
+
     subgraph Actions["DECISION / ACTIONS"]
-        ERP["APPROVED<br/>Mock ERP record"]
-        Review["HUMAN_REVIEW<br/>Global Human Review Queue"]
-        Operator["Operator correction / rejection"]
+        ERP["APPROVED<br/>Mock ERP Global<br/>BR + US records"]
+        Review["HUMAN_REVIEW<br/>Global Human Review Queue<br/>Universal fields"]
+        Operator["Correct / Reject"]
         Revalidate["Revalidation"]
-        Duplicate["DUPLICATE<br/>DUPLICATE_BLOCKED<br/>No duplicate ERP record"]
+        Duplicate["DUPLICATE_BLOCKED<br/>country_code + normalized_tax_id<br/>+ normalized_invoice_number"]
     end
 
     subgraph StateAudit["STATE & AUDIT"]
@@ -50,16 +59,19 @@ flowchart TD
     end
 
     PDF --> Web
-    Web --> API
+    Web --> Mode
+    Mode --> API
     API --> Processor
     Processor --> Intake
     Processor --> ADK
     ADK --> Document
     Document --> Gemini
-    Gemini --> Structured
+    Gemini --> Normalize
     Document -. "Gemini unavailable / quota / invalid response" .-> Fallback
-    Fallback --> Structured
-    Structured --> Validation
+    Fallback --> Normalize
+    Normalize --> Validation
+    BR --> Validation
+    US --> Validation
     Validation --> Decision
 
     Decision --> ERP
@@ -72,6 +84,7 @@ flowchart TD
 
     ADK -. events .-> Audit
     Document -. events .-> Audit
+    Normalize -. events .-> Audit
     Validation -. events .-> Audit
     Decision -. events .-> Audit
     Review -. events .-> Audit
@@ -102,10 +115,11 @@ flowchart TD
 | DocumentAgent (`agents/document/agent.py`) | Reads PDF text, calls Gemini for structured extraction, falls back to the local parser when needed, and stores extracted fields. |
 | Gemini extractor (`tools/documents/gemini_extractor.py`) | Uses `google-genai` with `gemini-3.6-flash` to produce structured fiscal JSON. |
 | Local parser fallback (`tools/documents/extractor.py`) | Uses local PDF/text parsing when Gemini is unavailable, over quota, or returns invalid output. |
-| ValidationAgent (`agents/validation/agent.py`) | Applies deterministic validation rules and emits validation results. |
+| Country detection and normalization (`tools/documents/normalization.py`) | Resolves `AUTO`, `BR`, and `US` context and normalizes tax ids, invoice numbers, dates, amounts, and currency into the universal model. |
+| ValidationAgent (`agents/validation/agent.py`) | Applies deterministic country-aware validation rules and emits validation results. |
 | DecisionAgent (`agents/decision/agent.py`) | Sends failed validations to Human Review, registers approved records, retries selected issues, and blocks duplicate invoices. |
 | Human Review (`apps/api/processor.py`) | Allows operator correction/rejection, revalidates corrected fields, and only sends valid corrections back to DecisionAgent. |
-| Mock ERP (`tools/erp/mock_erp.py`) | Builds local ERP records for approved documents. |
+| Mock ERP Global (`tools/erp/mock_erp.py`) | Builds local Mock ERP records for approved BR and US documents. |
 | ReportingAgent (`agents/reporting/agent.py`) | Refreshes job metrics and reports. |
 | Audit Trail (`AgentEvent`) | Captures workflow, extraction, validation, decision, review, duplicate, ERP, and reporting events. |
 | LocalStore (`shared/models/store.py`) | Persists jobs, documents, extractions, events, Human Reviews, ERP records, and counters to local JSON with backup support. |
@@ -265,7 +279,7 @@ flowchart TD
 
 ## Production Target Components
 
-These are explicitly future components and are not implemented in RC1:
+These are explicitly future components and are not implemented in the current Multi-Country RC:
 
 - Gmail connector
 - Outlook connector

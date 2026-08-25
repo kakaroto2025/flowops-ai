@@ -1,10 +1,14 @@
 flowchart TD
-    subgraph Input["INPUT"]
+    subgraph Input["DOCUMENT INTAKE"]
         PDF["Business Document / PDF"]
+        Web["Web Dashboard<br/>apps/web"]
+    end
+
+    subgraph Region["PROCESSING REGION"]
+        Mode["AUTO / BR / US"]
     end
 
     subgraph Application["APPLICATION"]
-        Web["Web Dashboard<br/>apps/web"]
         API["FastAPI<br/>apps/api/main.py"]
         Processor["JobProcessor<br/>apps/api/processor.py"]
         Intake["IntakeAgent<br/>agents/intake/agent.py"]
@@ -13,19 +17,24 @@ flowchart TD
     subgraph Agentic["AGENTIC WORKFLOW"]
         ADK["Google ADK<br/>FlowOpsAdkOrchestrator<br/>agents/adk/orchestrator.py"]
         Document["DocumentAgent<br/>agents/document/agent.py"]
-        Gemini["Gemini 3.6 Flash<br/>Structured extraction"]
+        Gemini["Gemini 3.6 Flash<br/>Structured document extraction<br/>Country-aware understanding"]
         Fallback["Local Parser Fallback<br/>tools/documents/extractor.py"]
-        Structured["Structured invoice data"]
-        Validation["ValidationAgent<br/>Deterministic rules"]
+        Normalize["Country Detection + Normalization<br/>tools/documents/normalization.py"]
+        Validation["ValidationAgent<br/>Country-aware deterministic rules"]
         Decision["DecisionAgent<br/>Decision / Action"]
     end
 
+    subgraph Policies["LOCAL COUNTRY RULES"]
+        BR["Brazil Policy<br/>CNPJ<br/>BRL<br/>BR document/date rules"]
+        US["United States Policy<br/>EIN / Tax ID<br/>USD<br/>US invoice/date rules"]
+    end
+
     subgraph Actions["DECISION / ACTIONS"]
-        ERP["APPROVED<br/>Mock ERP record"]
-        Review["HUMAN_REVIEW<br/>Global Human Review Queue"]
-        Operator["Operator correction / rejection"]
-        Revalidate["Revalidation"]
-        Duplicate["DUPLICATE<br/>DUPLICATE_BLOCKED<br/>No duplicate ERP record"]
+        ERP["APPROVED<br/>Mock ERP Global<br/>BR + US records"]
+        Review["HUMAN_REVIEW<br/>Global Human Review Queue<br/>Universal fields"]
+        Operator["Correct / Reject"]
+        Revalidate["Revalidate"]
+        Duplicate["DUPLICATE_BLOCKED<br/>country_code + normalized_tax_id<br/>+ normalized_invoice_number"]
     end
 
     subgraph StateAudit["STATE & AUDIT"]
@@ -38,16 +47,19 @@ flowchart TD
     end
 
     PDF --> Web
-    Web --> API
+    Web --> Mode
+    Mode --> API
     API --> Processor
     Processor --> Intake
     Processor --> ADK
     ADK --> Document
     Document --> Gemini
-    Gemini --> Structured
+    Gemini --> Normalize
     Document -. "Gemini unavailable / quota / invalid response" .-> Fallback
-    Fallback --> Structured
-    Structured --> Validation
+    Fallback --> Normalize
+    Normalize --> Validation
+    BR --> Validation
+    US --> Validation
     Validation --> Decision
 
     Decision --> ERP
@@ -60,6 +72,7 @@ flowchart TD
 
     ADK -. events .-> Audit
     Document -. events .-> Audit
+    Normalize -. events .-> Audit
     Validation -. events .-> Audit
     Decision -. events .-> Audit
     Review -. events .-> Audit
