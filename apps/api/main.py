@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from pathlib import Path
 from typing import Any
 
@@ -24,6 +25,7 @@ app = FastAPI(title="FlowOps AI API", version="0.1.0")
 store = LocalStore()
 processor = JobProcessor(store)
 WEB_DIR = Path("apps/web")
+APP_ENV = os.environ.get("APP_ENV", "local").strip().lower()
 
 if WEB_DIR.exists():
     app.mount("/assets", StaticFiles(directory=WEB_DIR), name="assets")
@@ -51,10 +53,11 @@ def health() -> dict[str, str]:
     return {"status": "ok", "service": "flowops-ai-api"}
 
 
-@app.post("/dev/reset")
-def reset_state() -> dict[str, str]:
-    store.reset()
-    return {"status": "reset"}
+if APP_ENV != "production":
+    @app.post("/dev/reset")
+    def reset_state() -> dict[str, str]:
+        store.reset()
+        return {"status": "reset"}
 
 
 @app.post("/jobs/demo")
