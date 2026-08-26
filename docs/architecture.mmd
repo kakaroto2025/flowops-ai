@@ -4,6 +4,11 @@ flowchart TD
         Web["Web Dashboard<br/>apps/web"]
     end
 
+    subgraph GoogleCloud["GOOGLE CLOUD - CURRENT"]
+        CloudRun["Google Cloud Run<br/>Hosted FlowOps AI runtime<br/>scale to zero / max instances: 1"]
+        SecretManager["Google Secret Manager<br/>GEMINI_API_KEY"]
+    end
+
     subgraph Region["PROCESSING REGION"]
         Mode["AUTO / BR / US"]
     end
@@ -44,10 +49,13 @@ flowchart TD
         State["local_data/state.json"]
         Backup["local_data/state.json.bak"]
         Uploads["local_data/uploads/<br/>local PDF files"]
+        Ephemeral["Ephemeral on Cloud Run<br/>not durable cloud storage"]
     end
 
     PDF --> Web
-    Web --> Mode
+    Web --> CloudRun
+    SecretManager -. "secure runtime secret" .-> CloudRun
+    CloudRun --> Mode
     Mode --> API
     API --> Processor
     Processor --> Intake
@@ -89,3 +97,4 @@ flowchart TD
     Store --> State
     State --> Backup
     API --> Uploads
+    State --> Ephemeral

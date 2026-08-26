@@ -36,6 +36,7 @@ FlowOps AI automates the current workflow end to end:
 
 ```text
 Document Intake
+-> Cloud Run / FastAPI
 -> Processing Region
 -> Google ADK
 -> DocumentAgent
@@ -48,7 +49,7 @@ Document Intake
 -> Persistent State
 ```
 
-The system processes uploaded PDF batches, extracts structured fields, normalizes localized values, validates regional rules deterministically, decides the next operational action, and records the result in the dashboard and persistent audit trail.
+The system processes uploaded PDF batches locally or through the hosted Cloud Run demo, extracts structured fields, normalizes localized values, validates regional rules deterministically, decides the next operational action, and records the result in the dashboard and persistent audit trail.
 
 ## 4. Hackathon Track
 
@@ -60,10 +61,12 @@ FlowOps AI fits the Taskmaster track because it coordinates a multi-step operati
 
 Implemented in the current Multi-Country RC:
 
+- public hackathon demo on Google Cloud Run;
 - PDF upload through the web dashboard;
 - batch processing with one job containing multiple documents;
 - Processing Region selection: Auto Detect, Brazil, United States;
 - Gemini structured extraction through `google-genai`;
+- Gemini API key injection through Google Secret Manager in Cloud Run;
 - deterministic local parser fallback;
 - PDF text extraction through `pypdf`;
 - country detection and normalization;
@@ -86,7 +89,8 @@ Implemented in the current Multi-Country RC:
 - audit trail events;
 - persistent local state in JSON;
 - atomic state writes with backup/recovery;
-- local FastAPI API and static web dashboard;
+- FastAPI API and static web dashboard;
+- Dockerfile and `.dockerignore` for Cloud Run deployment;
 - real multipart endpoint regression tests.
 
 ## 6. Multi-Country Document Intelligence
@@ -245,9 +249,23 @@ flowchart TD
     Store --> State[local_data/state.json]
 ```
 
-Current implementation is local-first. Firestore, Cloud Storage, Pub/Sub, and Cloud Run are not part of the current runtime.
+Current implementation includes the FastAPI application, Google ADK orchestration, Gemini 3.6 Flash extraction, local parser fallback, multi-country BR/US policy handling, Human Review, Duplicate Protection, Mock ERP, Audit Trail, LocalStore persistence, and a public Cloud Run hackathon demo.
 
-## 12. Google Technologies
+Firestore, Cloud Storage, and Pub/Sub are not part of the current runtime.
+
+## 12. Live Demo
+
+URL:
+
+```text
+https://flowops-ai-vns7icztma-rj.a.run.app
+```
+
+The hackathon MVP is deployed on Google Cloud Run. The hosted demo uses the same FastAPI application, Google ADK workflow, Gemini extraction path, country-aware validation, Human Review, Duplicate Protection, Mock ERP, and Audit Trail described in this README.
+
+This public demo does not claim production-grade persistent storage. It still uses LocalStore on the Cloud Run instance filesystem, which can be reset when the instance restarts.
+
+## 13. Google Technologies
 
 ### Gemini
 
@@ -258,6 +276,8 @@ Current implementation is local-first. Firestore, Cloud Storage, Pub/Sub, and Cl
 
 The DocumentAgent extracts PDF text, sends it to Gemini, and expects structured JSON aligned with the universal model. If Gemini is unavailable, returns invalid JSON, hits quota, times out, or fails with an API error, FlowOps records `LOCAL_PARSER_FALLBACK` and continues with the deterministic parser.
 
+Cloud validation successfully used Gemini extraction for one valid United States invoice and one valid Brazilian invoice, both without fallback.
+
 ### Google Agent Development Kit (ADK)
 
 - Package: `google-adk` 2.7.1 in the validated local environment
@@ -266,7 +286,32 @@ The DocumentAgent extracts PDF text, sends it to Gemini, and expects structured 
 
 `FlowOpsAdkOrchestrator` is part of the real job execution path. It records `ADK_WORKFLOW_STARTED`, confirms the ADK runtime when available, runs the existing agents, and records `ADK_WORKFLOW_COMPLETED`. If the ADK model acknowledgement fails with a recoverable quota error, the workflow continues safely and records `ADK_ORCHESTRATOR_UNAVAILABLE`.
 
-## 13. Agent Workflow
+### Google Cloud Deployment
+
+The public hackathon demo is deployed on Google Cloud Run:
+
+- Service: `flowops-ai`;
+- Region: `southamerica-east1`;
+- scale-to-zero enabled;
+- maximum instances: 1;
+- public demo URL: `https://flowops-ai-vns7icztma-rj.a.run.app`;
+- `GEMINI_API_KEY` is stored in Google Secret Manager and injected into Cloud Run at runtime.
+
+No project secrets, billing details, account emails, or service-account credentials are documented in this repository.
+
+### Secret Manager
+
+In the Cloud Run demo:
+
+```text
+GEMINI_API_KEY
+-> Google Secret Manager
+-> Cloud Run runtime environment
+```
+
+The secret value is never committed and is not printed by the application.
+
+## 14. Agent Workflow
 
 ### DocumentAgent
 
@@ -296,7 +341,7 @@ The DocumentAgent extracts PDF text, sends it to Gemini, and expects structured 
 - Output: dashboard or report data.
 - Main events: `JOB_METRICS_UPDATED` and, when requested, `REPORT_GENERATED`.
 
-## 14. Human Review
+## 15. Human Review
 
 Documents with unresolved validation problems are routed to the global Human Review queue.
 
@@ -315,7 +360,7 @@ When the operator corrects and approves a review, FlowOps re-runs `ValidationAge
 
 The Human Review queue is global. A review created in an older job remains accessible even after newer jobs are processed.
 
-## 15. Duplicate Protection
+## 16. Duplicate Protection
 
 FlowOps uses the country-aware business key:
 
@@ -346,7 +391,7 @@ Duplicate records are not sent to the Mock ERP again. The duplicate event includ
 
 This works within the same job, across jobs, across the BR/US identity model, and after restarting the local API as long as `local_data/state.json` is preserved.
 
-## 16. Mock ERP
+## 17. Mock ERP
 
 The current ERP integration is a Mock ERP, not a production ERP.
 
@@ -361,7 +406,7 @@ Mock ERP Global supports approved records from Brazil and the United States. The
 
 Approved documents create Mock ERP records. Human Review documents, rejected documents, and duplicate-blocked documents do not create duplicate ERP records.
 
-## 17. Resilience
+## 18. Resilience
 
 FlowOps currently includes local MVP resilience, not enterprise infrastructure:
 
@@ -373,9 +418,9 @@ FlowOps currently includes local MVP resilience, not enterprise infrastructure:
 - a valid `state.json` is copied to `state.json.bak`;
 - if `state.json` is missing or invalid, controlled recovery can load from `state.json.bak`.
 
-These mechanisms are suitable for the local Multi-Country RC demo, not a multi-process production deployment.
+These mechanisms are suitable for the Multi-Country RC hackathon demo, not a multi-process production deployment.
 
-## 18. Persistence
+## 19. Persistence
 
 Current state file:
 
@@ -407,7 +452,14 @@ local_data/uploads/
 
 `local_data/` is ignored by Git and is intended for local demo/runtime data.
 
-## 19. Project Structure
+In the hosted Cloud Run demo, this same LocalStore/state.json persistence model runs on the ephemeral Cloud Run filesystem. State can be lost when the instance restarts, scales down, or is redeployed. For the hackathon demo this is a known limitation.
+
+Production target persistence remains:
+
+- Firestore for operational state;
+- Cloud Storage for uploaded documents.
+
+## 20. Project Structure
 
 ```text
 apps/
@@ -453,9 +505,12 @@ tests/
   test_vertical_slice.py
 
 docs/
+
+Dockerfile
+.dockerignore
 ```
 
-## 20. Requirements
+## 21. Requirements
 
 Validated local runtime:
 
@@ -478,7 +533,7 @@ Install the project dependency set from:
 requirements.txt
 ```
 
-## 21. Environment Setup
+## 22. Environment Setup
 
 ### Windows PowerShell
 
@@ -502,7 +557,7 @@ python -m pip install --upgrade pip
 python -m pip install -r requirements.txt
 ```
 
-## 22. Environment Variables
+## 23. Environment Variables
 
 Create a local `.env` file from `.env.example` and set:
 
@@ -520,9 +575,9 @@ local_data/
 .venv/
 ```
 
-`.env.example` may also contain placeholders for future Google Cloud configuration. Those variables are not required for the current local workflow unless explicitly enabled in later milestones.
+Local development uses `.env`. The hosted Cloud Run demo uses Google Secret Manager for `GEMINI_API_KEY` instead of a committed environment file.
 
-## 23. Running FlowOps
+## 24. Running FlowOps
 
 Start the local FastAPI application:
 
@@ -548,7 +603,7 @@ Health endpoint:
 http://127.0.0.1:8080/health
 ```
 
-## 24. Running Tests
+## 25. Running Tests
 
 Run the full test suite:
 
@@ -580,7 +635,14 @@ Coverage includes:
 - Mock ERP;
 - audit trail.
 
-## 25. Demo Workflow
+Validated Cloud Run scenarios:
+
+```text
+US valid invoice -> REGISTERED / US / EIN / USD / GEMINI_EXTRACTION
+BR valid invoice -> REGISTERED / BR / CNPJ / BRL / GEMINI_EXTRACTION
+```
+
+## 26. Demo Workflow
 
 A juror can reproduce the local demo as follows:
 
@@ -597,7 +659,7 @@ A juror can reproduce the local demo as follows:
 
 For batch testing, upload a BR or US batch in one request and inspect Job History, global Human Review, global Mock ERP, and the audit trail.
 
-## 26. Sample Data
+## 27. Sample Data
 
 Bundled sample files currently published in the repository are under:
 
@@ -617,7 +679,7 @@ NF005.pdf
 
 These are the sample documents currently committed to the repository. The US manual acceptance PDFs used during local testing are not currently published as repository sample data.
 
-## 27. API Endpoints
+## 28. API Endpoints
 
 Important endpoints implemented in `apps/api/main.py`:
 
@@ -641,7 +703,9 @@ GET  /erp-records
 GET  /demo/sample-files
 ```
 
-## 28. Auditability
+`POST /dev/reset` is available for local development by default and is disabled in production through `APP_ENV=production`.
+
+## 29. Auditability
 
 FlowOps records agent events as part of the persisted state. Important event types include:
 
@@ -672,23 +736,22 @@ FlowOps records agent events as part of the persisted state. Important event typ
 
 Events include safe metadata such as job id, document id, agent name, event type, message, timestamp, and event data. Secrets are not intentionally logged.
 
-## 29. Current Limitations
+## 30. Current Limitations
 
 Current Multi-Country RC limitations:
 
 - currently supports Brazil and the United States only;
 - Mock ERP only; no production ERP integration yet;
-- local JSON persistence only;
+- local JSON persistence only, including the current Cloud Run demo filesystem;
 - process-local write lock only; not safe for multiple Uvicorn workers writing the same state file;
 - uploaded PDFs are stored locally;
 - Gemini quota or API failures can trigger local fallback;
 - no automatic Gmail, Outlook, or WhatsApp ingestion yet;
 - no production authentication/authorization layer yet;
-- no production Google Cloud deployment yet;
 - no Firestore, Cloud Storage, or Pub/Sub runtime integration yet;
 - local parser fallback covers documented BR/US scenarios but is not a full fiscal-document extraction engine.
 
-## 30. Production Architecture / Roadmap
+## 31. Production Architecture / Roadmap
 
 Future production targets, not implemented in the current Multi-Country RC:
 
@@ -696,7 +759,6 @@ Future production targets, not implemented in the current Multi-Country RC:
 - Outlook intake;
 - WhatsApp Business intake;
 - API intake hardening;
-- Cloud Run deployment;
 - Firestore persistence;
 - Cloud Storage for uploaded documents;
 - Pub/Sub queues for asynchronous processing;
@@ -708,27 +770,31 @@ Future production targets, not implemented in the current Multi-Country RC:
 
 Brazil and the United States are current runtime markets. Additional countries are future work.
 
-## 31. Security
+## 32. Security
 
-Current local security practices:
+Current security practices:
 
-- Gemini API key is loaded from environment configuration.
+- Gemini API key is loaded from local environment configuration during local development.
+- In Cloud Run, `GEMINI_API_KEY` is stored in Google Secret Manager and injected at runtime.
 - `.env` is ignored by Git.
 - `.env.example` contains placeholders only.
 - API keys and secrets must not be committed.
 - The README does not contain secrets.
+- `/dev/reset` is disabled in production through `APP_ENV=production`.
+- Local state and uploads are not publicly served by the FastAPI static file mount.
 
 No compliance certification is claimed for the current release.
 
-## 32. Hackathon Status
+## 33. Hackathon Status
 
 ```text
 Track: Taskmaster
 Gemini: gemini-3.6-flash
 Agent Framework: Google ADK 2.7.1
+Google Cloud: Cloud Run
+Secrets: Google Secret Manager
 Current Version: FlowOps AI Multi-Country RC
 Supported Markets: Brazil + United States
 Tests: 72 passing
+Hosted Demo: https://flowops-ai-vns7icztma-rj.a.run.app
 ```
-
-Cloud deployment is a future production target and is not claimed as completed in the current local runtime.

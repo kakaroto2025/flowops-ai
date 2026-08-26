@@ -16,6 +16,11 @@ flowchart TD
         Web["Web Dashboard<br/>apps/web"]
     end
 
+    subgraph GoogleCloud["GOOGLE CLOUD - CURRENT"]
+        CloudRun["Google Cloud Run<br/>Hosted FlowOps AI runtime<br/>scale to zero / max instances: 1"]
+        SecretManager["Google Secret Manager<br/>GEMINI_API_KEY"]
+    end
+
     subgraph Region["PROCESSING REGION"]
         Mode["AUTO / BR / US"]
     end
@@ -56,10 +61,13 @@ flowchart TD
         State["local_data/state.json"]
         Backup["local_data/state.json.bak"]
         Uploads["local_data/uploads/<br/>local PDF files"]
+        Ephemeral["Ephemeral on Cloud Run<br/>not durable cloud storage"]
     end
 
     PDF --> Web
-    Web --> Mode
+    Web --> CloudRun
+    SecretManager -. "secure runtime secret" .-> CloudRun
+    CloudRun --> Mode
     Mode --> API
     API --> Processor
     Processor --> Intake
@@ -101,6 +109,7 @@ flowchart TD
     Store --> State
     State --> Backup
     API --> Uploads
+    State --> Ephemeral
 ```
 
 ## Component Responsibilities
@@ -108,6 +117,8 @@ flowchart TD
 | Component | Responsibility |
 | --- | --- |
 | Web Dashboard (`apps/web`) | Provides local UI for uploads, jobs, documents, Human Review, Mock ERP, and audit timeline. |
+| Google Cloud Run | Hosts the public hackathon demo runtime for the FastAPI application. The deployed service scales to zero and is capped at one instance for the demo. |
+| Google Secret Manager | Stores `GEMINI_API_KEY` and injects it into the Cloud Run runtime without exposing the secret value. |
 | FastAPI (`apps/api/main.py`) | Serves the dashboard and exposes job, upload, Human Review, ERP, report, and health endpoints. |
 | JobProcessor (`apps/api/processor.py`) | Wires the agents together, creates upload/demo jobs, runs jobs through ADK, and resolves/rejects Human Reviews. |
 | IntakeAgent (`agents/intake/agent.py`) | Creates jobs, queues documents, and records intake events. |
@@ -122,7 +133,7 @@ flowchart TD
 | Mock ERP Global (`tools/erp/mock_erp.py`) | Builds local Mock ERP records for approved BR and US documents. |
 | ReportingAgent (`agents/reporting/agent.py`) | Refreshes job metrics and reports. |
 | Audit Trail (`AgentEvent`) | Captures workflow, extraction, validation, decision, review, duplicate, ERP, and reporting events. |
-| LocalStore (`shared/models/store.py`) | Persists jobs, documents, extractions, events, Human Reviews, ERP records, and counters to local JSON with backup support. |
+| LocalStore (`shared/models/store.py`) | Persists jobs, documents, extractions, events, Human Reviews, ERP records, and counters to local JSON with backup support. In the Cloud Run demo this state is ephemeral and not durable cloud persistence. |
 
 ## Multi-Country Document Intelligence
 
@@ -150,15 +161,17 @@ Brazilian documents use CNPJ and BRL. United States documents use EIN/Tax ID and
 
 ## Real Call Flow Found In Code
 
-1. `POST /jobs/upload/run` in `apps/api/main.py` saves PDFs to `local_data/uploads/`.
-2. `JobProcessor.create_upload_job()` calls `IntakeAgent.create_job()`.
-3. `JobProcessor.run_job()` calls `FlowOpsAdkOrchestrator.run_job()`.
-4. `FlowOpsAdkOrchestrator` records `ADK_WORKFLOW_STARTED`, optionally confirms ADK runtime, then runs the existing agents.
-5. `DocumentAgent.process()` reads PDF text, calls Gemini, or uses `LOCAL_PARSER_FALLBACK`.
-6. `ValidationAgent.validate()` applies deterministic validation rules.
-7. `DecisionAgent.decide()` retries, creates Human Review, blocks duplicates, or creates Mock ERP records.
-8. `ReportingAgent.refresh_job_metrics()` updates job status and dashboard metrics.
-9. All major steps persist events through `LocalStore.add_event()`.
+1. The Web Dashboard sends uploaded documents to the FastAPI application, locally or through the hosted Cloud Run service.
+2. In Cloud Run, `GEMINI_API_KEY` is injected from Google Secret Manager at runtime.
+3. `POST /jobs/upload/run` in `apps/api/main.py` saves PDFs to `local_data/uploads/`.
+4. `JobProcessor.create_upload_job()` calls `IntakeAgent.create_job()`.
+5. `JobProcessor.run_job()` calls `FlowOpsAdkOrchestrator.run_job()`.
+6. `FlowOpsAdkOrchestrator` records `ADK_WORKFLOW_STARTED`, optionally confirms ADK runtime, then runs the existing agents.
+7. `DocumentAgent.process()` reads PDF text, calls Gemini, or uses `LOCAL_PARSER_FALLBACK`.
+8. `ValidationAgent.validate()` applies deterministic validation rules.
+9. `DecisionAgent.decide()` retries, creates Human Review, blocks duplicates, or creates Mock ERP records.
+10. `ReportingAgent.refresh_job_metrics()` updates job status and dashboard metrics.
+11. All major steps persist events through `LocalStore.add_event()`.
 
 ## Human-in-the-Loop Flow
 
@@ -202,9 +215,9 @@ flowchart TD
         end
 
         subgraph FutureRuntime["Runtime"]
-            CloudRun["Cloud Run"]
+            ManagedRuntime["Managed deployment hardening"]
             ProdADK["Google ADK Orchestration"]
-            ProdGemini["Gemini"]
+            ProdGemini["Gemini monitoring"]
         end
 
         subgraph FuturePersistence["Persistence & Storage"]
@@ -224,19 +237,19 @@ flowchart TD
         end
     end
 
-    Gmail -. future .-> CloudRun
-    Outlook -. future .-> CloudRun
-    WhatsApp -. future .-> CloudRun
-    ExternalAPI -. future .-> CloudRun
-    CloudRun -. future .-> ProdADK
+    Gmail -. future .-> ManagedRuntime
+    Outlook -. future .-> ManagedRuntime
+    WhatsApp -. future .-> ManagedRuntime
+    ExternalAPI -. future .-> ManagedRuntime
+    ManagedRuntime -. future .-> ProdADK
     ProdADK -. future .-> ProdGemini
-    CloudRun -. future .-> Firestore
-    CloudRun -. future .-> CloudStorage
-    CloudRun -. future .-> ERPAPIs
+    ManagedRuntime -. future .-> Firestore
+    ManagedRuntime -. future .-> CloudStorage
+    ManagedRuntime -. future .-> ERPAPIs
     ERPAPIs -. future .-> Accounting
     ERPAPIs -. future .-> Finance
-    CloudRun -. future .-> Auth
-    CloudRun -. future .-> Observability
+    ManagedRuntime -. future .-> Auth
+    ManagedRuntime -. future .-> Observability
 ```
 
 ## Current vs Future
@@ -244,8 +257,9 @@ flowchart TD
 | Capability | Current MVP | Production Target |
 | --- | --- | --- |
 | Document intake | Manual dashboard upload and demo sample files | Gmail, Outlook, WhatsApp Business, and external API intake |
-| Runtime | Local FastAPI/Uvicorn process | Cloud Run |
-| Agent orchestration | Google ADK `FlowOpsAdkOrchestrator` in local workflow | Google ADK in deployed service architecture |
+| Runtime | Google Cloud Run public demo and local FastAPI/Uvicorn development runtime | Managed deployment hardening |
+| Secret handling | Google Secret Manager in Cloud Run; local `.env` for development | Enterprise secret rotation and access policy |
+| Agent orchestration | Google ADK `FlowOpsAdkOrchestrator` in the real workflow | Google ADK with production observability and quotas |
 | Structured extraction | Gemini 3.6 Flash with local parser fallback | Gemini with production quota/configuration and monitoring |
 | File storage | `local_data/uploads/` | Cloud Storage |
 | State | `LocalStore` in `local_data/state.json` | Firestore |
@@ -253,11 +267,13 @@ flowchart TD
 | ERP destination | Mock ERP records in local state | Production ERP/accounting/finance APIs |
 | Human Review | Local dashboard global queue | Authenticated operator workflow |
 | Audit Trail | Local `AgentEvent` records in JSON state | Centralized observability/audit logging |
-| Security | Local `.env` secrets and Git ignore rules | Authentication, authorization, secret management, monitoring |
+| Security | Secret Manager for Gemini in Cloud Run, local `.env` for development, and Git ignore rules | Authentication, authorization, secret rotation, and monitoring |
 
 ## Current MVP Components
 
 - Web Dashboard
+- Google Cloud Run
+- Google Secret Manager
 - FastAPI
 - JobProcessor
 - IntakeAgent
@@ -273,7 +289,7 @@ flowchart TD
 - ReportingAgent
 - Audit Trail
 - LocalStore
-- `local_data/state.json`
+- `local_data/state.json` on ephemeral Cloud Run filesystem for the hosted demo
 - `local_data/state.json.bak`
 - `local_data/uploads/`
 
@@ -285,7 +301,6 @@ These are explicitly future components and are not implemented in the current Mu
 - Outlook connector
 - WhatsApp Business connector
 - external API ingestion
-- Cloud Run
 - Firestore
 - Cloud Storage
 - production ERP APIs
@@ -296,10 +311,11 @@ These are explicitly future components and are not implemented in the current Mu
 ## Verification Notes
 
 - Current and future architecture are separated.
+- Cloud Run and Secret Manager appear as current implemented Google Cloud services.
 - Gemini 3.6 Flash appears as the structured extraction model in the current workflow.
 - Google ADK appears as `FlowOpsAdkOrchestrator` in the current workflow.
 - Human Review appears as a global queue with correction, revalidation, approval, and rejection paths.
 - Duplicate Blocking appears with `DUPLICATE_BLOCKED`, `DUPLICATE_DETECTED`, and no duplicate ERP record.
 - Audit Trail appears as persisted `AgentEvent` records.
-- Current MVP persistence is explicitly `LocalStore`, `local_data/state.json`, `local_data/state.json.bak`, and `local_data/uploads/`.
-- Cloud Run, Firestore, Cloud Storage, Gmail, Outlook, WhatsApp, and production ERP APIs are shown only in the Production Target section and marked not yet implemented.
+- Current MVP persistence is explicitly `LocalStore`, `local_data/state.json`, `local_data/state.json.bak`, and `local_data/uploads/`, with the Cloud Run filesystem limitation called out as ephemeral.
+- Firestore, Cloud Storage, Gmail, Outlook, WhatsApp, authentication/authorization, observability, additional country packs, and production ERP APIs are shown only in the Production Target section and marked not yet implemented.
