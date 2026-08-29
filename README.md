@@ -265,6 +265,24 @@ The hackathon MVP is deployed on Google Cloud Run. The hosted demo uses the same
 
 This public demo does not claim production-grade persistent storage. It still uses LocalStore on the Cloud Run instance filesystem, which can be reset when the instance restarts.
 
+### Google Cloud Deployment Proof
+
+The FlowOps AI backend is deployed and running on Google Cloud Run.
+
+- Google Cloud Project: `flowops-ai-506712`
+- Infrastructure: Google Cloud Run
+- Service: `flowops-ai`
+- Region: `southamerica-east1`
+- Runtime: FastAPI + Google ADK
+- AI model: Gemini 3.6 Flash
+- Current revision: `flowops-ai-00003-j6r`
+- Public Cloud Run URL: `https://flowops-ai-vns7icztma-rj.a.run.app`
+- Health endpoint: `https://flowops-ai-vns7icztma-rj.a.run.app/health`
+- Secret handling: `GEMINI_API_KEY` is injected through Google Secret Manager
+- Official demo video: `https://youtu.be/q385nHmSSbg`
+
+The official demo video includes visual proof from the real Google Cloud Console, showing the Cloud Run service, the live `.run.app` URL, the service status, and the running FlowOps AI application. No API keys, billing account identifiers, service account keys, or secret values are shown.
+
 ## 13. Google Technologies
 
 ### Gemini
