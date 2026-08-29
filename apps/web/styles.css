@@ -283,6 +283,39 @@ h2 {
   margin-top: 18px;
 }
 
+.finops-panel {
+  min-height: 0;
+  margin: 0 0 20px;
+}
+
+.finops-grid {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.finops-grid div {
+  min-height: 82px;
+  border: 1px solid #223247;
+  border-radius: 7px;
+  background: #0c121a;
+  padding: 13px;
+}
+
+.finops-grid span {
+  display: block;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.finops-grid strong {
+  display: block;
+  margin-top: 10px;
+  color: var(--text);
+  font-size: 22px;
+  line-height: 1.1;
+}
+
 .panel {
   min-height: 340px;
   padding: 18px;
@@ -572,6 +605,7 @@ td {
   }
 
   .overview,
+  .finops-grid,
   .layout,
   .upload-panel {
     grid-template-columns: 1fr;

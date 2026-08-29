@@ -114,6 +114,11 @@ def list_erp_records() -> list[dict[str, Any]]:
     return build_global_erp_records(store)
 
 
+@app.get("/api/finops/usage")
+def finops_usage() -> dict[str, Any]:
+    return processor.usage_tracker.get_usage_summary()
+
+
 @app.get("/jobs/{job_id}")
 def get_job(job_id: str) -> dict[str, Any]:
     if job_id not in store.jobs:

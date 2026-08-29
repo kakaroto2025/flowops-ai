@@ -220,4 +220,36 @@ def extract_with_gemini(fiscal_text: str, *, model: str = MODEL, processing_regi
     if not response_text.strip():
         raise GeminiExtractionError("model_response_empty")
 
-    return normalize_payload(extract_json(response_text))
+    payload = normalize_payload(extract_json(response_text))
+    usage_metadata = _extract_usage_metadata(getattr(response, "usage_metadata", None))
+    if usage_metadata:
+        payload["gemini_usage_metadata"] = usage_metadata
+    return payload
+
+
+def _extract_usage_metadata(metadata: Any) -> dict[str, int | None]:
+    if metadata is None:
+        return {}
+    prompt_tokens = _metadata_value(metadata, "prompt_token_count", "input_token_count")
+    output_tokens = _metadata_value(metadata, "candidates_token_count", "output_token_count")
+    total_tokens = _metadata_value(metadata, "total_token_count")
+    if prompt_tokens is None and output_tokens is None and total_tokens is None:
+        return {}
+    return {
+        "input_tokens": prompt_tokens,
+        "output_tokens": output_tokens,
+        "total_tokens": total_tokens,
+    }
+
+
+def _metadata_value(metadata: Any, *names: str) -> int | None:
+    for name in names:
+        value = getattr(metadata, name, None)
+        if value is None and isinstance(metadata, dict):
+            value = metadata.get(name)
+        if value is not None:
+            try:
+                return int(value)
+            except (TypeError, ValueError):
+                return None
+    return None

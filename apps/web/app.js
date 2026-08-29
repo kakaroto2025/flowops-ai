@@ -16,6 +16,12 @@ const reviewList = document.querySelector("#reviewList");
 const eventsList = document.querySelector("#eventsList");
 const erpTable = document.querySelector("#erpTable");
 const jobsHistoryTable = document.querySelector("#jobsHistoryTable");
+const finopsMode = document.querySelector("#finopsMode");
+const finopsDocsToday = document.querySelector("#finopsDocsToday");
+const finopsGeminiToday = document.querySelector("#finopsGeminiToday");
+const finopsTokensToday = document.querySelector("#finopsTokensToday");
+const finopsCostToday = document.querySelector("#finopsCostToday");
+const finopsBudgetUsage = document.querySelector("#finopsBudgetUsage");
 
 let currentJobId = null;
 
@@ -135,6 +141,22 @@ async function refreshGlobalErp() {
   erpRecords.textContent = records.length;
 }
 
+async function refreshFinops() {
+  const usage = await request("/api/finops/usage");
+  finopsMode.textContent = usage.free_tier_first ? "FREE TIER FIRST: ON" : "FREE TIER FIRST: OFF";
+  finopsMode.className = usage.free_tier_first ? "pill done" : "pill muted";
+  finopsDocsToday.textContent = usage.documents_today;
+  finopsGeminiToday.textContent = usage.gemini_calls_today;
+  const tokens = [usage.input_tokens_today, usage.output_tokens_today].filter((value) => value !== null && value !== undefined);
+  finopsTokensToday.textContent = tokens.length ? tokens.reduce((sum, value) => sum + value, 0) : "--";
+  finopsCostToday.textContent = usage.estimated_ai_cost_today_usd === null
+    ? "--"
+    : money(usage.estimated_ai_cost_today_usd, "USD");
+  finopsBudgetUsage.textContent = usage.percentage_of_internal_budget_used === null
+    ? "--"
+    : `${usage.percentage_of_internal_budget_used}%`;
+}
+
 async function loadJob(jobId) {
   setLoading(true);
   try {
@@ -143,6 +165,7 @@ async function loadJob(jobId) {
     await refreshJobHistory();
     await refreshGlobalReviews();
     await refreshGlobalErp();
+    await refreshFinops();
     setApiStatus(true);
   } catch (error) {
     setApiStatus(false);
@@ -295,6 +318,7 @@ async function runDemo() {
     await refreshJobHistory();
     await refreshGlobalReviews();
     await refreshGlobalErp();
+    await refreshFinops();
     setApiStatus(true);
   } catch (error) {
     setApiStatus(false);
@@ -324,6 +348,7 @@ async function resetDemo() {
     renderEvents([]);
     renderErp([]);
     renderJobHistory([]);
+    await refreshFinops();
     setApiStatus(true);
   } catch (error) {
     setApiStatus(false);
@@ -349,6 +374,7 @@ async function processUpload() {
     await refreshJobHistory();
     await refreshGlobalReviews();
     await refreshGlobalErp();
+    await refreshFinops();
     setApiStatus(true);
   } catch (error) {
     setApiStatus(false);
@@ -390,6 +416,7 @@ async function approveReview(card) {
     await refreshJobHistory();
     await refreshGlobalReviews();
     await refreshGlobalErp();
+    await refreshFinops();
     setApiStatus(true);
   } catch (error) {
     setApiStatus(false);
@@ -413,6 +440,7 @@ async function rejectReview(card) {
     await refreshJobHistory();
     await refreshGlobalReviews();
     await refreshGlobalErp();
+    await refreshFinops();
     setApiStatus(true);
   } catch (error) {
     setApiStatus(false);
@@ -438,6 +466,7 @@ async function boot() {
     await refreshJobHistory();
     await refreshGlobalReviews();
     await refreshGlobalErp();
+    await refreshFinops();
     setApiStatus(true);
   } catch (error) {
     setApiStatus(false);

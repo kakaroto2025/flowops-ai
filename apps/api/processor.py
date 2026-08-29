@@ -11,13 +11,16 @@ from agents.validation import ValidationAgent
 from shared.models import AgentEvent, DocumentStatus, Job, LocalStore
 from shared.models.entities import utc_now
 from tools.documents.normalization import normalize_extraction_payload
+from tools.finops import CostGuard, UsageTracker
 
 
 class JobProcessor:
     def __init__(self, store: LocalStore):
         self.store = store
         self.intake = IntakeAgent(store)
-        self.document_agent = DocumentAgent(store)
+        self.usage_tracker = UsageTracker(store)
+        self.cost_guard = CostGuard(self.usage_tracker)
+        self.document_agent = DocumentAgent(store, cost_guard=self.cost_guard)
         self.validation = ValidationAgent(store)
         self.decision = DecisionAgent(store)
         self.reporting = ReportingAgent(store)
@@ -27,6 +30,8 @@ class JobProcessor:
             validation_agent=self.validation,
             decision_agent=self.decision,
             reporting_agent=self.reporting,
+            cost_guard=self.cost_guard,
+            usage_tracker=self.usage_tracker,
         )
 
     def create_demo_job(self, sample_dir: str | Path = "sample_data/alfa_contabilidade", processing_region: str = "AUTO") -> Job:

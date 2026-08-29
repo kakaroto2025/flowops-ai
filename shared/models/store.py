@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Any
 
 from .entities import AgentEvent, Document, ERPRecord, Extraction, HumanReview, Job, utc_now
+from tools.finops.models import UsageRecord
 from tools.documents.normalization import business_key, normalize_extraction_payload
 
 
@@ -39,6 +40,7 @@ class LocalStore:
         self.events: dict[str, AgentEvent] = {}
         self.human_reviews: dict[str, HumanReview] = {}
         self.erp_records: dict[str, ERPRecord] = {}
+        self.finops_usage_records: dict[str, UsageRecord] = {}
         self._counters: dict[str, int] = {}
         self.load()
 
@@ -56,6 +58,7 @@ class LocalStore:
                 "events": {k: asdict(v) for k, v in self.events.items()},
                 "human_reviews": {k: asdict(v) for k, v in self.human_reviews.items()},
                 "erp_records": {k: asdict(v) for k, v in self.erp_records.items()},
+                "finops_usage_records": {k: asdict(v) for k, v in self.finops_usage_records.items()},
             }
             self._atomic_write_json(payload)
 
@@ -96,6 +99,10 @@ class LocalStore:
             k: HumanReview(**self._compatible_human_review_payload(v)) for k, v in payload.get("human_reviews", {}).items()
         }
         self.erp_records = {k: ERPRecord(**self._compatible_erp_payload(v)) for k, v in payload.get("erp_records", {}).items()}
+        self.finops_usage_records = {
+            k: UsageRecord(**self._compatible_finops_usage_payload(v))
+            for k, v in payload.get("finops_usage_records", {}).items()
+        }
 
     def _compatible_job_payload(self, payload: dict[str, Any]) -> dict[str, Any]:
         return _filter_dataclass_payload(Job, {"processing_region": "AUTO", **payload})
@@ -136,6 +143,9 @@ class LocalStore:
                 "currency": payload.get("currency") or normalized.get("currency"),
             },
         )
+
+    def _compatible_finops_usage_payload(self, payload: dict[str, Any]) -> dict[str, Any]:
+        return _filter_dataclass_payload(UsageRecord, payload)
 
     def _atomic_write_json(self, payload: dict[str, Any]) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)
@@ -180,6 +190,7 @@ class LocalStore:
         self.events.clear()
         self.human_reviews.clear()
         self.erp_records.clear()
+        self.finops_usage_records.clear()
         self._counters.clear()
         self.save()
 
@@ -217,6 +228,11 @@ class LocalStore:
         record.normalized_invoice_number = record.normalized_invoice_number or normalized.get("normalized_invoice_number")
         record.currency = record.currency or normalized.get("currency")
         self.erp_records[record.id] = record
+        self.save()
+        return record
+
+    def add_finops_usage_record(self, record: UsageRecord) -> UsageRecord:
+        self.finops_usage_records[record.id] = record
         self.save()
         return record
 

@@ -18,6 +18,7 @@ from agents.document import DocumentAgent
 from agents.reporting import ReportingAgent
 from agents.validation import ValidationAgent
 from shared.models import AgentEvent, DocumentStatus, JobStatus, LocalStore
+from tools.finops import CostGuard, UsageRecord, UsageTracker
 from tools.reporting import build_dashboard
 
 
@@ -35,12 +36,16 @@ class FlowOpsAdkOrchestrator:
         validation_agent: ValidationAgent,
         decision_agent: DecisionAgent,
         reporting_agent: ReportingAgent,
+        cost_guard: CostGuard | None = None,
+        usage_tracker: UsageTracker | None = None,
     ):
         self.store = store
         self.document_agent = document_agent
         self.validation_agent = validation_agent
         self.decision_agent = decision_agent
         self.reporting_agent = reporting_agent
+        self.cost_guard = cost_guard
+        self.usage_tracker = usage_tracker
 
     def run_job(self, job_id: str) -> dict[str, Any]:
         self._event(job_id, "ADK_WORKFLOW_STARTED", "ADK workflow started.")
@@ -90,13 +95,91 @@ class FlowOpsAdkOrchestrator:
         documents = self.store.documents_for_job(job_id)
         for document in documents:
             while document.status in {DocumentStatus.QUEUED, DocumentStatus.RETRY}:
+                guard_result = self.cost_guard.can_process_document(document) if self.cost_guard else None
+                if guard_result and not guard_result.allowed:
+                    self.store.update_document(document.id, status=DocumentStatus.FAILED)
+                    self._event(
+                        job_id,
+                        "FINOPS_BLOCK",
+                        "Cost Guard blocked document before processing.",
+                        document.id,
+                        guard_result.to_dict(),
+                    )
+                    self._record_finops_usage(
+                        document.id,
+                        {
+                            "file_size_bytes": self.cost_guard.file_size_bytes(document.storage_path),
+                            "blocked_by_cost_guard": True,
+                            "block_reason": guard_result.reason,
+                            "processing_status": DocumentStatus.FAILED,
+                        },
+                    )
+                    break
+                if guard_result and guard_result.reason:
+                    self._event(
+                        job_id,
+                        "FINOPS_WARNING",
+                        "Cost Guard soft warning before document processing.",
+                        document.id,
+                        guard_result.to_dict(),
+                    )
+                elif guard_result:
+                    self._event(
+                        job_id,
+                        "FINOPS_ALLOW",
+                        "Cost Guard allowed document processing.",
+                        document.id,
+                        guard_result.to_dict(),
+                    )
                 extraction = self.document_agent.process(document)
                 validation = self.validation_agent.validate(document, extraction)
                 decision = self.decision_agent.decide(document, extraction, validation)
                 document = self.store.documents[document.id]
+                self._record_finops_usage(document.id, {"processing_status": document.status})
                 if decision != "RETRY":
                     break
         return self.reporting_agent.refresh_job_metrics(job_id)
+
+    def _record_finops_usage(self, document_id: str, overrides: dict[str, Any] | None = None) -> None:
+        if not self.usage_tracker:
+            return
+        document = self.store.documents[document_id]
+        payload = dict(getattr(self.document_agent, "last_finops_usage", {}).pop(document_id, {}) or {})
+        payload.update(overrides or {})
+        record = UsageRecord(
+            id=self.store.next_id("usage"),
+            job_id=document.job_id,
+            document_id=document.id,
+            document_type=payload.get("document_type"),
+            country=payload.get("country"),
+            file_size_bytes=payload.get("file_size_bytes"),
+            gemini_used=bool(payload.get("gemini_used", False)),
+            gemini_model=payload.get("gemini_model"),
+            gemini_calls=int(payload.get("gemini_calls") or 0),
+            input_tokens=payload.get("input_tokens"),
+            output_tokens=payload.get("output_tokens"),
+            total_tokens=payload.get("total_tokens"),
+            estimated_ai_cost_usd=payload.get("estimated_ai_cost_usd"),
+            estimated_ai_cost_brl=payload.get("estimated_ai_cost_brl"),
+            parser_fallback_used=bool(payload.get("parser_fallback_used", False)),
+            processing_status=str(payload.get("processing_status") or document.status),
+            blocked_by_cost_guard=bool(payload.get("blocked_by_cost_guard", False)),
+            block_reason=payload.get("block_reason"),
+            warning_reason=payload.get("warning_reason"),
+        )
+        self.usage_tracker.record_usage(record)
+        self._event(
+            document.job_id,
+            "FINOPS_USAGE_RECORDED",
+            "FinOps usage record stored.",
+            document.id,
+            {
+                "usage_record_id": record.id,
+                "gemini_used": record.gemini_used,
+                "gemini_calls": record.gemini_calls,
+                "blocked_by_cost_guard": record.blocked_by_cost_guard,
+            },
+        )
 
     def _confirm_adk_runtime(self, job_id: str) -> str:
         return asyncio.run(self._confirm_adk_runtime_async(job_id))
