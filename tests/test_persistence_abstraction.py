@@ -90,9 +90,10 @@ class PersistenceAbstractionTests(unittest.TestCase):
 
         self.assertIsInstance(store, LocalStore)
 
-    def test_cloud_storage_mode_fails_safely_until_implemented(self):
-        with self.assertRaisesRegex(PersistenceConfigurationError, "STORAGE_MODE=cloud"):
-            create_persistence_store("cloud", self.root / "state.json")
+    def test_cloud_storage_mode_requires_configuration(self):
+        with patch.dict(os.environ, {}, clear=True):
+            with self.assertRaisesRegex(PersistenceConfigurationError, "GOOGLE_CLOUD_PROJECT"):
+                create_persistence_store("cloud", self.root / "state.json")
 
     def test_unknown_storage_mode_fails_safely(self):
         with self.assertRaisesRegex(PersistenceConfigurationError, "Unsupported STORAGE_MODE"):
