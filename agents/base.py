@@ -2,13 +2,13 @@ from __future__ import annotations
 
 from typing import Any
 
-from shared.models import AgentEvent, LocalStore
+from shared.models import AgentEvent, PersistenceStore
 
 
 class BaseAgent:
     name = "BaseAgent"
 
-    def __init__(self, store: LocalStore):
+    def __init__(self, store: PersistenceStore):
         self.store = store
 
     def event(
@@ -29,4 +29,3 @@ class BaseAgent:
             data=data or {},
         )
         return self.store.add_event(event)
-

@@ -8,14 +8,14 @@ from agents.document import DocumentAgent
 from agents.intake import IntakeAgent
 from agents.reporting import ReportingAgent
 from agents.validation import ValidationAgent
-from shared.models import AgentEvent, DocumentStatus, Job, LocalStore
+from shared.models import AgentEvent, DocumentStatus, Job, PersistenceStore
 from shared.models.entities import utc_now
 from tools.documents.normalization import normalize_extraction_payload
 from tools.finops import CostGuard, UsageTracker
 
 
 class JobProcessor:
-    def __init__(self, store: LocalStore):
+    def __init__(self, store: PersistenceStore):
         self.store = store
         self.intake = IntakeAgent(store)
         self.usage_tracker = UsageTracker(store)

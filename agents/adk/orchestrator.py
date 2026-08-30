@@ -17,7 +17,7 @@ from agents.decision import DecisionAgent
 from agents.document import DocumentAgent
 from agents.reporting import ReportingAgent
 from agents.validation import ValidationAgent
-from shared.models import AgentEvent, DocumentStatus, JobStatus, LocalStore
+from shared.models import AgentEvent, DocumentStatus, JobStatus, PersistenceStore
 from tools.finops import CostGuard, UsageRecord, UsageTracker
 from tools.reporting import build_dashboard
 
@@ -31,7 +31,7 @@ class FlowOpsAdkOrchestrator:
 
     def __init__(
         self,
-        store: LocalStore,
+        store: PersistenceStore,
         document_agent: DocumentAgent,
         validation_agent: ValidationAgent,
         decision_agent: DecisionAgent,

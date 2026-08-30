@@ -11,7 +11,7 @@ from pydantic import BaseModel
 from starlette.concurrency import run_in_threadpool
 
 from apps.api.processor import JobProcessor
-from shared.models import LocalStore
+from shared.models import create_persistence_store
 from tools.reporting import (
     build_dashboard,
     build_global_erp_records,
@@ -22,7 +22,7 @@ from tools.reporting import (
 
 
 app = FastAPI(title="FlowOps AI API", version="0.1.0")
-store = LocalStore()
+store = create_persistence_store()
 processor = JobProcessor(store)
 WEB_DIR = Path("apps/web")
 APP_ENV = os.environ.get("APP_ENV", "local").strip().lower()

@@ -3,10 +3,10 @@ from __future__ import annotations
 from collections import Counter
 from typing import Any
 
-from shared.models import LocalStore
+from shared.models import PersistenceStore
 
 
-def build_dashboard(store: LocalStore, job_id: str) -> dict[str, Any]:
+def build_dashboard(store: PersistenceStore, job_id: str) -> dict[str, Any]:
     job = store.jobs[job_id]
     documents = store.documents_for_job(job_id)
     events = store.events_for_job(job_id)
@@ -54,7 +54,7 @@ def build_dashboard(store: LocalStore, job_id: str) -> dict[str, Any]:
     }
 
 
-def build_job_history(store: LocalStore) -> list[dict[str, Any]]:
+def build_job_history(store: PersistenceStore) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
     for job in store.jobs.values():
         documents = store.documents_for_job(job.id)
@@ -78,7 +78,7 @@ def build_job_history(store: LocalStore) -> list[dict[str, Any]]:
     return sorted(rows, key=lambda row: row["created_at"], reverse=True)
 
 
-def build_global_human_review_queue(store: LocalStore) -> list[dict[str, Any]]:
+def build_global_human_review_queue(store: PersistenceStore) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
     for review in store.open_human_reviews():
         document = store.documents.get(review.document_id)
@@ -92,7 +92,7 @@ def build_global_human_review_queue(store: LocalStore) -> list[dict[str, Any]]:
     return rows
 
 
-def build_global_erp_records(store: LocalStore) -> list[dict[str, Any]]:
+def build_global_erp_records(store: PersistenceStore) -> list[dict[str, Any]]:
     return [
         record.to_dict()
         for record in sorted(
@@ -103,7 +103,7 @@ def build_global_erp_records(store: LocalStore) -> list[dict[str, Any]]:
     ]
 
 
-def build_report(store: LocalStore, job_id: str) -> dict[str, Any]:
+def build_report(store: PersistenceStore, job_id: str) -> dict[str, Any]:
     dashboard = build_dashboard(store, job_id)
     return {
         "job_id": job_id,

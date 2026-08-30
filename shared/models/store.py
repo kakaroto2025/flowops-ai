@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Any
 
 from .entities import AgentEvent, Document, ERPRecord, Extraction, HumanReview, Job, utc_now
+from .persistence import PersistenceStore
 from tools.finops.models import UsageRecord
 from tools.documents.normalization import business_key, normalize_extraction_payload
 
@@ -27,7 +28,7 @@ def _normalize_business_key(value: str | None) -> str:
     return "".join(char for char in str(value or "") if char.isalnum()).lower()
 
 
-class LocalStore:
+class LocalStore(PersistenceStore):
     def __init__(self, path: str | Path = "local_data/state.json"):
         self.path = Path(path)
         self.backup_path = self.path.with_name(f"{self.path.name}.bak")
