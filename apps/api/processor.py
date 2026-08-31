@@ -19,7 +19,7 @@ class JobProcessor:
         self.store = store
         self.auth_context = auth_context or development_auth_context()
         self.intake = IntakeAgent(store)
-        self.usage_tracker = UsageTracker(store)
+        self.usage_tracker = UsageTracker(store, tenant_id=self.auth_context.tenant_id)
         self.cost_guard = CostGuard(self.usage_tracker)
         self.document_agent = DocumentAgent(store, cost_guard=self.cost_guard)
         self.validation = ValidationAgent(store)

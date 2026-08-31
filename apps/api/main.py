@@ -10,6 +10,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from starlette.concurrency import run_in_threadpool
 
+from apps.api.auth import AuthDependency
 from apps.api.processor import JobProcessor
 from shared.models import create_persistence_store
 from tools.reporting import (
@@ -61,19 +62,21 @@ if APP_ENV != "production":
 
 
 @app.post("/jobs/demo")
-def create_demo_job(processing_region: str = "AUTO") -> dict[str, Any]:
-    job = processor.create_demo_job(processing_region=processing_region)
+def create_demo_job(auth_context: AuthDependency, processing_region: str = "AUTO") -> dict[str, Any]:
+    job = _processor_for(auth_context).create_demo_job(processing_region=processing_region)
     return job.to_dict()
 
 
 @app.post("/jobs/demo/run")
-def create_and_run_demo_job(processing_region: str = "AUTO") -> dict[str, Any]:
-    job = processor.create_demo_job(processing_region=processing_region)
-    return processor.run_job(job.id)
+def create_and_run_demo_job(auth_context: AuthDependency, processing_region: str = "AUTO") -> dict[str, Any]:
+    request_processor = _processor_for(auth_context)
+    job = request_processor.create_demo_job(processing_region=processing_region)
+    return request_processor.run_job(job.id)
 
 
 @app.post("/jobs/upload/run")
 async def upload_and_run_job(
+    auth_context: AuthDependency,
     files: list[UploadFile] = File(...),
     processing_region: str = Form("AUTO"),
 ) -> dict[str, Any]:
@@ -95,71 +98,78 @@ async def upload_and_run_job(
         destination.write_bytes(await upload.read())
         saved_files.append(destination)
 
-    job = processor.create_upload_job(saved_files, processing_region=normalize_region(processing_region))
-    return await run_in_threadpool(processor.run_job, job.id)
+    request_processor = _processor_for(auth_context)
+    job = request_processor.create_upload_job(saved_files, processing_region=normalize_region(processing_region))
+    return await run_in_threadpool(request_processor.run_job, job.id)
 
 
 @app.get("/jobs")
-def list_jobs() -> list[dict[str, Any]]:
-    return build_job_history(store)
+def list_jobs(auth_context: AuthDependency) -> list[dict[str, Any]]:
+    return [row for row in build_job_history(store) if store.jobs[row["job_id"]].tenant_id == auth_context.tenant_id]
 
 
 @app.get("/human-reviews")
-def list_human_reviews() -> list[dict[str, Any]]:
-    return build_global_human_review_queue(store)
+def list_human_reviews(auth_context: AuthDependency) -> list[dict[str, Any]]:
+    return [row for row in build_global_human_review_queue(store) if row.get("tenant_id") == auth_context.tenant_id]
 
 
 @app.get("/erp-records")
-def list_erp_records() -> list[dict[str, Any]]:
-    return build_global_erp_records(store)
+def list_erp_records(auth_context: AuthDependency) -> list[dict[str, Any]]:
+    return [row for row in build_global_erp_records(store) if row.get("tenant_id") == auth_context.tenant_id]
 
 
 @app.get("/api/finops/usage")
-def finops_usage() -> dict[str, Any]:
-    return processor.usage_tracker.get_usage_summary()
+def finops_usage(auth_context: AuthDependency) -> dict[str, Any]:
+    return _processor_for(auth_context).usage_tracker.get_usage_summary()
 
 
 @app.get("/jobs/{job_id}")
-def get_job(job_id: str) -> dict[str, Any]:
+def get_job(job_id: str, auth_context: AuthDependency) -> dict[str, Any]:
     if job_id not in store.jobs:
         raise HTTPException(status_code=404, detail="job_not_found")
+    _ensure_job_access(auth_context, job_id)
     return build_dashboard(store, job_id)
 
 
 @app.post("/jobs/{job_id}/run")
-def run_job(job_id: str) -> dict[str, Any]:
+def run_job(job_id: str, auth_context: AuthDependency) -> dict[str, Any]:
     if job_id not in store.jobs:
         raise HTTPException(status_code=404, detail="job_not_found")
-    return processor.run_job(job_id)
+    _ensure_job_access(auth_context, job_id)
+    return _processor_for(auth_context).run_job(job_id)
 
 
 @app.get("/jobs/{job_id}/events")
-def get_events(job_id: str) -> list[dict[str, Any]]:
+def get_events(job_id: str, auth_context: AuthDependency) -> list[dict[str, Any]]:
     if job_id not in store.jobs:
         raise HTTPException(status_code=404, detail="job_not_found")
+    _ensure_job_access(auth_context, job_id)
     return [event.to_dict() for event in store.events_for_job(job_id)]
 
 
 @app.get("/jobs/{job_id}/dashboard")
-def get_dashboard(job_id: str) -> dict[str, Any]:
+def get_dashboard(job_id: str, auth_context: AuthDependency) -> dict[str, Any]:
     if job_id not in store.jobs:
         raise HTTPException(status_code=404, detail="job_not_found")
+    _ensure_job_access(auth_context, job_id)
     return build_dashboard(store, job_id)
 
 
 @app.get("/jobs/{job_id}/report")
-def get_report(job_id: str) -> dict[str, Any]:
+def get_report(job_id: str, auth_context: AuthDependency) -> dict[str, Any]:
     if job_id not in store.jobs:
         raise HTTPException(status_code=404, detail="job_not_found")
+    _ensure_job_access(auth_context, job_id)
     return build_report(store, job_id)
 
 
 @app.post("/human-reviews/{review_id}/resolve")
-def resolve_review(review_id: str, payload: ResolveReviewRequest) -> dict[str, Any]:
+def resolve_review(review_id: str, payload: ResolveReviewRequest, auth_context: AuthDependency) -> dict[str, Any]:
     if review_id not in store.human_reviews:
         raise HTTPException(status_code=404, detail="review_not_found")
+    _ensure_review_access(auth_context, review_id)
     try:
-        return processor.resolve_review(
+        return _processor_for(auth_context).resolve_review(
             review_id,
             corrected_fields=payload.corrected_fields,
             reviewer=payload.reviewer,
@@ -169,11 +179,12 @@ def resolve_review(review_id: str, payload: ResolveReviewRequest) -> dict[str, A
 
 
 @app.post("/human-reviews/{review_id}/reject")
-def reject_review(review_id: str, payload: RejectReviewRequest | None = None) -> dict[str, Any]:
+def reject_review(review_id: str, auth_context: AuthDependency, payload: RejectReviewRequest | None = None) -> dict[str, Any]:
     if review_id not in store.human_reviews:
         raise HTTPException(status_code=404, detail="review_not_found")
+    _ensure_review_access(auth_context, review_id)
     try:
-        return processor.reject_review(review_id, reviewer=payload.reviewer if payload else "demo_user")
+        return _processor_for(auth_context).reject_review(review_id, reviewer=payload.reviewer if payload else "demo_user")
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
@@ -183,3 +194,25 @@ def sample_files() -> list[str]:
     sample_dir = Path("sample_data/alfa_contabilidade")
     return [path.name for path in sorted(sample_dir.glob("*.pdf"))]
 from tools.documents.normalization import normalize_region
+
+
+def _processor_for(auth_context) -> JobProcessor:
+    return JobProcessor(store, auth_context=auth_context)
+
+
+def _ensure_job_access(auth_context, job_id: str) -> None:
+    try:
+        store.job_for_tenant(auth_context.tenant_id, job_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="job_not_found") from exc
+    except Exception as exc:
+        raise HTTPException(status_code=403, detail="tenant_access_denied") from exc
+
+
+def _ensure_review_access(auth_context, review_id: str) -> None:
+    try:
+        store.review_for_tenant(auth_context.tenant_id, review_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="review_not_found") from exc
+    except Exception as exc:
+        raise HTTPException(status_code=403, detail="tenant_access_denied") from exc

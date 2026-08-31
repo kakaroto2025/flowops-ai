@@ -8,9 +8,10 @@ from .models import FinOpsConfig, UsageRecord
 
 
 class UsageTracker:
-    def __init__(self, store: Any, config: FinOpsConfig | None = None):
+    def __init__(self, store: Any, config: FinOpsConfig | None = None, tenant_id: str | None = None):
         self.store = store
         self.config = config or FinOpsConfig.from_env()
+        self.tenant_id = tenant_id
 
     def record_usage(self, record: UsageRecord) -> UsageRecord:
         if not record.id:
@@ -72,7 +73,10 @@ class UsageTracker:
 
     def _records(self) -> list[UsageRecord]:
         values = getattr(self.store, "finops_usage_records", {}).values()
-        return [record if isinstance(record, UsageRecord) else _usage_from_dict(record) for record in values]
+        records = [record if isinstance(record, UsageRecord) else _usage_from_dict(record) for record in values]
+        if self.tenant_id is None:
+            return records
+        return [record for record in records if record.tenant_id == self.tenant_id]
 
     def _aggregate(self, records: list[UsageRecord]) -> dict[str, Any]:
         return {
