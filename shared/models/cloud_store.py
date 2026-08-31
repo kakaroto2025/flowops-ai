@@ -40,6 +40,7 @@ class CloudStoreConfig:
 
 
 class FirestoreBackend(Protocol):
+    def allocate_counter(self, collection: str, document_id: str, prefix: str) -> int: ...
     def upsert(self, collection: str, document_id: str, payload: dict[str, Any]) -> None: ...
     def delete_collection(self, collection: str) -> None: ...
 
@@ -60,7 +61,24 @@ class FirestoreRepository:
             raise PersistenceConfigurationError(
                 "STORAGE_MODE=cloud requires google-cloud-firestore to be installed."
             ) from exc
+        self.firestore = firestore
         self.client = firestore.Client(project=config.project_id, database=config.firestore_database)
+
+    def allocate_counter(self, collection: str, document_id: str, prefix: str) -> int:
+        document_ref = self.client.collection(collection).document(document_id)
+        transaction = self.client.transaction()
+
+        @self.firestore.transactional
+        def increment_counter(transaction, counter_ref, counter_prefix: str) -> int:
+            snapshot = counter_ref.get(transaction=transaction)
+            payload = snapshot.to_dict() if snapshot.exists else {}
+            counters = dict(payload.get("counters", {}) or {})
+            next_value = int(counters.get(counter_prefix, 0)) + 1
+            counters[counter_prefix] = next_value
+            transaction.set(counter_ref, {"counters": counters}, merge=True)
+            return next_value
+
+        return increment_counter(transaction, document_ref, prefix)
 
     def upsert(self, collection: str, document_id: str, payload: dict[str, Any]) -> None:
         self.client.collection(collection).document(document_id).set(payload)
@@ -150,12 +168,15 @@ class CloudStore(PersistenceStore):
         self._counters: dict[str, int] = {}
 
     def next_id(self, prefix: str) -> str:
-        self._counters[prefix] = self._counters.get(prefix, 0) + 1
-        self._persist("counters", "global", {"counters": dict(self._counters)})
-        return f"{prefix}_{self._counters[prefix]:06d}"
+        try:
+            next_value = self.firestore.allocate_counter(self.COLLECTIONS["counters"], "global", prefix)
+        except Exception as exc:
+            raise PersistenceConfigurationError(f"CloudStore counter allocation failed for {prefix}.") from exc
+        self._counters[prefix] = next_value
+        return f"{prefix}_{next_value:06d}"
 
     def save(self) -> None:
-        self._persist("counters", "global", {"counters": dict(self._counters)})
+        return None
 
     def load(self) -> None:
         return None

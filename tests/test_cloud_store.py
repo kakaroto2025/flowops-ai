@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import threading
 import tempfile
 import unittest
 from pathlib import Path
@@ -22,10 +23,28 @@ from shared.models import (
 
 
 class FakeFirestoreBackend:
-    def __init__(self, fail_writes: bool = False):
+    def __init__(self, fail_writes: bool = False, fail_counters: bool = False):
         self.fail_writes = fail_writes
+        self.fail_counters = fail_counters
         self.upserts: list[tuple[str, str, dict]] = []
         self.deleted_collections: list[str] = []
+        self.counters: dict[str, dict[str, int]] = {}
+        self.counter_allocations: list[tuple[str, str, str, int]] = []
+        self.counter_lock = threading.Lock()
+        self.transaction_count = 0
+        self.query_count = 0
+
+    def allocate_counter(self, collection: str, document_id: str, prefix: str) -> int:
+        if self.fail_counters:
+            raise RuntimeError("counter transaction unavailable")
+        with self.counter_lock:
+            self.transaction_count += 1
+            key = f"{collection}/{document_id}"
+            counters = self.counters.setdefault(key, {})
+            counters[prefix] = counters.get(prefix, 0) + 1
+            next_value = counters[prefix]
+            self.counter_allocations.append((collection, document_id, prefix, next_value))
+            return next_value
 
     def upsert(self, collection: str, document_id: str, payload: dict) -> None:
         if self.fail_writes:
@@ -227,6 +246,7 @@ class CloudStoreTests(unittest.TestCase):
         self.assertIn("flowops_extractions", collections)
         self.assertIn("flowops_human_reviews", collections)
         self.assertIn("flowops_events", collections)
+        self.assertEqual(firestore.counters["flowops_counters/global"], {"job": 1, "doc": 1})
 
     def test_object_path_is_deterministic(self):
         storage = FakeObjectStorage()
@@ -297,6 +317,78 @@ class CloudStoreTests(unittest.TestCase):
             store.document_object_metadata(document)
         with self.assertRaises(FileNotFoundError):
             store.read_document_bytes(document)
+
+    def test_cloud_counter_first_and_subsequent_allocations_are_transactional(self):
+        firestore = FakeFirestoreBackend()
+        store = self.store(firestore=firestore)
+
+        self.assertEqual(store.next_id("job"), "job_000001")
+        self.assertEqual(store.next_id("job"), "job_000002")
+
+        self.assertEqual(firestore.counters["flowops_counters/global"]["job"], 2)
+        self.assertEqual(firestore.transaction_count, 2)
+        self.assertEqual(firestore.query_count, 0)
+
+    def test_cloud_counter_formats_supported_prefixes(self):
+        firestore = FakeFirestoreBackend()
+        store = self.store(firestore=firestore)
+
+        expected = {
+            "job": "job_000001",
+            "doc": "doc_000001",
+            "ext": "ext_000001",
+            "evt": "evt_000001",
+            "erp": "erp_000001",
+            "usage": "usage_000001",
+        }
+
+        self.assertEqual({prefix: store.next_id(prefix) for prefix in expected}, expected)
+
+    def test_cloud_counter_state_is_shared_across_store_instances(self):
+        firestore = FakeFirestoreBackend()
+        first = self.store(firestore=firestore)
+        second = self.store(firestore=firestore)
+
+        self.assertEqual(first.next_id("job"), "job_000001")
+        self.assertEqual(second.next_id("job"), "job_000002")
+        self.assertEqual(first.next_id("job"), "job_000003")
+
+    def test_cloud_counter_process_recreation_does_not_reset_ids(self):
+        firestore = FakeFirestoreBackend()
+
+        self.assertEqual(self.store(firestore=firestore).next_id("doc"), "doc_000001")
+        recreated = self.store(firestore=firestore)
+
+        self.assertEqual(recreated.next_id("doc"), "doc_000002")
+
+    def test_cloud_counter_concurrent_callers_receive_unique_ids(self):
+        firestore = FakeFirestoreBackend()
+        store = self.store(firestore=firestore)
+        ids: list[str] = []
+        ids_lock = threading.Lock()
+
+        def allocate() -> None:
+            next_id = store.next_id("evt")
+            with ids_lock:
+                ids.append(next_id)
+
+        threads = [threading.Thread(target=allocate) for _ in range(30)]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join()
+
+        self.assertEqual(len(ids), 30)
+        self.assertEqual(len(set(ids)), 30)
+        self.assertEqual(sorted(ids)[0], "evt_000001")
+        self.assertEqual(sorted(ids)[-1], "evt_000030")
+        self.assertEqual(firestore.transaction_count, 30)
+
+    def test_cloud_counter_transaction_failure_does_not_fallback_to_local_id(self):
+        store = self.store(firestore=FakeFirestoreBackend(fail_counters=True))
+
+        with self.assertRaisesRegex(PersistenceConfigurationError, "CloudStore counter allocation failed"):
+            store.next_id("job")
 
     def test_erp_deduplication_is_idempotent(self):
         firestore = FakeFirestoreBackend()
