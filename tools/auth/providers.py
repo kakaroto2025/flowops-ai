@@ -19,6 +19,10 @@ class AuthorizationError(AuthProviderError):
     pass
 
 
+class MembershipRepositoryError(AuthorizationError):
+    pass
+
+
 @dataclass(frozen=True)
 class AuthenticatedIdentity:
     external_uid: str
@@ -72,6 +76,50 @@ class InMemoryMembershipRepository:
 
     def get_by_external_uid(self, external_uid: str) -> UserMembership | None:
         return self.memberships.get(external_uid)
+
+
+class FirestoreMembershipRepository:
+    def __init__(
+        self,
+        project_id: str,
+        database: str = "(default)",
+        collection: str = "memberships",
+        firestore_client: Any | None = None,
+    ):
+        if not project_id:
+            raise AuthProviderError("FirestoreMembershipRepository requires GOOGLE_CLOUD_PROJECT")
+        if not database:
+            raise AuthProviderError("FirestoreMembershipRepository requires FIRESTORE_DATABASE")
+        self.project_id = project_id
+        self.database = database
+        self.collection = collection or "memberships"
+        self.client = firestore_client or self._create_client()
+
+    @classmethod
+    def from_env(cls) -> "FirestoreMembershipRepository":
+        project_id = (os.environ.get("GOOGLE_CLOUD_PROJECT") or os.environ.get("FIREBASE_PROJECT_ID") or "").strip()
+        database = os.environ.get("FIRESTORE_DATABASE", "(default)").strip() or "(default)"
+        collection = os.environ.get("FLOWOPS_MEMBERSHIP_COLLECTION", "memberships").strip() or "memberships"
+        return cls(project_id=project_id, database=database, collection=collection)
+
+    def get_by_external_uid(self, external_uid: str) -> UserMembership | None:
+        if not external_uid:
+            return None
+        try:
+            snapshot = self.client.collection(self.collection).document(external_uid).get()
+        except Exception as exc:
+            raise MembershipRepositoryError("membership lookup failed") from exc
+        if not getattr(snapshot, "exists", False):
+            return None
+        payload = snapshot.to_dict() or {}
+        return _membership_from_payload(external_uid, payload)
+
+    def _create_client(self):
+        try:
+            from google.cloud import firestore
+        except ImportError as exc:
+            raise AuthProviderError("Firestore membership requires google-cloud-firestore to be installed") from exc
+        return firestore.Client(project=self.project_id, database=self.database)
 
 
 class DevelopmentAuthProvider:
@@ -130,3 +178,28 @@ def auth_mode(value: str | None = None) -> str:
 def _safe_claims(decoded: dict[str, Any]) -> dict[str, Any]:
     allowed = {"iss", "aud", "email_verified", "auth_time"}
     return {key: decoded[key] for key in allowed if key in decoded}
+
+
+def _membership_from_payload(expected_uid: str, payload: dict[str, Any]) -> UserMembership:
+    external_uid = str(payload.get("external_uid") or expected_uid)
+    if external_uid != expected_uid:
+        raise MembershipRepositoryError("membership external_uid mismatch")
+    tenant_id = str(payload.get("tenant_id") or "")
+    user_id = str(payload.get("user_id") or external_uid)
+    status = str(payload.get("status") or "").upper()
+    roles = payload.get("roles", ["member"])
+    if not isinstance(roles, (list, tuple)) or not roles:
+        raise MembershipRepositoryError("membership roles are invalid")
+    try:
+        membership = UserMembership(
+            external_uid=external_uid,
+            tenant_id=tenant_id,
+            user_id=user_id,
+            status=status,
+            roles=tuple(str(role) for role in roles),
+        )
+        if membership.status == "ACTIVE":
+            membership.to_auth_context()
+        return membership
+    except ValueError as exc:
+        raise MembershipRepositoryError("membership payload is invalid") from exc

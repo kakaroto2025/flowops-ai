@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import os
 from typing import Annotated
 
 from fastapi import Depends, HTTPException, Request
@@ -13,8 +12,10 @@ from tools.auth import (
     AuthorizationError,
     DevelopmentAuthProvider,
     FirebaseAuthProvider,
+    FirestoreMembershipRepository,
     InMemoryMembershipRepository,
     MembershipRepository,
+    MembershipRepositoryError,
     auth_mode,
 )
 
@@ -34,7 +35,10 @@ def get_auth_context(request: Request) -> AuthContext:
     except AuthProviderError as exc:
         raise HTTPException(status_code=401, detail="authentication_unavailable") from exc
 
-    membership = membership_repository.get_by_external_uid(identity.external_uid)
+    try:
+        membership = membership_repository.get_by_external_uid(identity.external_uid)
+    except MembershipRepositoryError as exc:
+        raise HTTPException(status_code=403, detail="tenant_membership_unavailable") from exc
     if membership is None:
         raise HTTPException(status_code=403, detail="tenant_membership_required")
     try:
@@ -56,7 +60,7 @@ def get_auth_provider() -> AuthProvider:
 def get_membership_repository() -> MembershipRepository:
     if auth_mode() == "development":
         return InMemoryMembershipRepository.development()
-    return InMemoryMembershipRepository(_firebase_test_memberships_from_env())
+    return FirestoreMembershipRepository.from_env()
 
 
 def _bearer_token(request: Request) -> str:
@@ -65,20 +69,3 @@ def _bearer_token(request: Request) -> str:
     if scheme.lower() != "bearer" or not token.strip():
         raise HTTPException(status_code=401, detail="bearer_token_required")
     return token.strip()
-
-
-def _firebase_test_memberships_from_env():
-    raw = os.environ.get("FLOWOPS_TEST_MEMBERSHIPS", "").strip()
-    if not raw:
-        return []
-    from tools.auth import UserMembership
-
-    memberships = []
-    for item in raw.split(","):
-        parts = [part.strip() for part in item.split(":")]
-        if len(parts) < 3:
-            continue
-        external_uid, tenant_id, user_id = parts[:3]
-        status = parts[3] if len(parts) > 3 else "ACTIVE"
-        memberships.append(UserMembership(external_uid=external_uid, tenant_id=tenant_id, user_id=user_id, status=status))
-    return memberships
