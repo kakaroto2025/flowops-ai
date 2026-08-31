@@ -26,6 +26,7 @@ class BaseAgent:
             agent=self.name,
             event_type=event_type,
             message=message,
+            tenant_id=self.store.jobs[job_id].tenant_id,
             data=data or {},
         )
         return self.store.add_event(event)

@@ -14,6 +14,7 @@ def build_erp_record(record_id: str, job_id: str, extraction: Extraction) -> ERP
         invoice_number=extraction.invoice_number,
         cnpj=extraction.cnpj or tax_id,
         total_amount=extraction.total_amount,
+        tenant_id=extraction.tenant_id,
         company_name=extraction.company_name,
         issue_date=extraction.issue_date,
         country_code=extraction.country_code,

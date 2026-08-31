@@ -150,6 +150,7 @@ class FlowOpsAdkOrchestrator:
             id=self.store.next_id("usage"),
             job_id=document.job_id,
             document_id=document.id,
+            tenant_id=document.tenant_id,
             document_type=payload.get("document_type"),
             country=payload.get("country"),
             file_size_bytes=payload.get("file_size_bytes"),
@@ -255,6 +256,7 @@ class FlowOpsAdkOrchestrator:
             agent=self.name,
             event_type=event_type,
             message=message,
+            tenant_id=self.store.jobs[job_id].tenant_id,
             data=data or {},
         )
         return self.store.add_event(event)

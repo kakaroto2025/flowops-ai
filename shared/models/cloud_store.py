@@ -8,6 +8,7 @@ from typing import Any, Protocol
 from tools.documents.normalization import business_key, normalize_extraction_payload
 from tools.finops.models import UsageRecord
 
+from .auth_context import DEVELOPMENT_TENANT_ID, TenantContextError
 from .entities import AgentEvent, Document, ERPRecord, Extraction, HumanReview, Job, utc_now
 from .persistence import PersistenceConfigurationError, PersistenceStore
 
@@ -100,7 +101,7 @@ class CloudStorageRepository:
 
     def object_path(self, document: Document) -> str:
         safe_name = Path(document.file_name).name
-        return f"documents/default/{document.id}/{safe_name}"
+        return f"documents/{document.tenant_id}/{document.id}/{safe_name}"
 
     def upload_bytes(self, object_path: str, content: bytes, content_type: str) -> str:
         blob = self._fresh_blob(object_path)
@@ -229,6 +230,7 @@ class CloudStore(PersistenceStore):
             tax_id=record.tax_id,
             normalized_tax_id=record.normalized_tax_id,
             normalized_invoice_number=record.normalized_invoice_number,
+            tenant_id=record.tenant_id,
         )
         if existing:
             return existing
@@ -292,6 +294,7 @@ class CloudStore(PersistenceStore):
         tax_id: str | None = None,
         normalized_tax_id: str | None = None,
         normalized_invoice_number: str | None = None,
+        tenant_id: str | None = None,
     ) -> ERPRecord | None:
         lookup_key = business_key(
             {
@@ -306,6 +309,8 @@ class CloudStore(PersistenceStore):
         if not lookup_key:
             return None
         for record in self.erp_records.values():
+            if tenant_id is not None and record.tenant_id != tenant_id:
+                continue
             if business_key(record) == lookup_key:
                 return record
         return None
@@ -315,6 +320,24 @@ class CloudStore(PersistenceStore):
             [review for review in self.human_reviews.values() if review.status == "OPEN"],
             key=lambda review: review.created_at,
         )
+
+    def job_for_tenant(self, tenant_id: str, job_id: str) -> Job:
+        job = self.jobs[job_id]
+        if job.tenant_id != tenant_id:
+            raise TenantContextError("job does not belong to tenant")
+        return job
+
+    def document_for_tenant(self, tenant_id: str, document_id: str) -> Document:
+        document = self.documents[document_id]
+        if document.tenant_id != tenant_id:
+            raise TenantContextError("document does not belong to tenant")
+        return document
+
+    def review_for_tenant(self, tenant_id: str, review_id: str) -> HumanReview:
+        review = self.human_reviews[review_id]
+        if review.tenant_id != tenant_id:
+            raise TenantContextError("review does not belong to tenant")
+        return review
 
     def object_path_for_document(self, document: Document) -> str:
         return self.object_storage.object_path(document)
@@ -347,14 +370,16 @@ class CloudStore(PersistenceStore):
 
     def _compatible_payload(self, entity_name: str, payload: dict[str, Any]) -> dict[str, Any]:
         if entity_name == "jobs":
-            return _filter_dataclass_payload(Job, {"processing_region": "AUTO", **payload})
+            return _filter_dataclass_payload(Job, {"tenant_id": DEVELOPMENT_TENANT_ID, "processing_region": "AUTO", **payload})
         if entity_name == "documents":
-            return _filter_dataclass_payload(Document, {"processing_region": "AUTO", **payload})
+            return _filter_dataclass_payload(Document, {"tenant_id": DEVELOPMENT_TENANT_ID, "processing_region": "AUTO", **payload})
         if entity_name == "extractions":
             return _filter_dataclass_payload(
                 Extraction,
-                normalize_extraction_payload(payload, processing_region=payload.get("country_code") or "AUTO"),
+                {"tenant_id": DEVELOPMENT_TENANT_ID, **normalize_extraction_payload(payload, processing_region=payload.get("country_code") or "AUTO")},
             )
+        if entity_name == "events":
+            return _filter_dataclass_payload(AgentEvent, {"tenant_id": DEVELOPMENT_TENANT_ID, **payload})
         if entity_name == "human_reviews":
             suggested_fields = payload.get("suggested_fields")
             if isinstance(suggested_fields, dict):
@@ -365,12 +390,13 @@ class CloudStore(PersistenceStore):
                         processing_region=suggested_fields.get("country_code") or "AUTO",
                     ),
                 }
-            return _filter_dataclass_payload(HumanReview, payload)
+            return _filter_dataclass_payload(HumanReview, {"tenant_id": DEVELOPMENT_TENANT_ID, **payload})
         if entity_name == "erp_records":
             normalized = normalize_extraction_payload(payload, processing_region=payload.get("country_code") or "AUTO")
             return _filter_dataclass_payload(
                 ERPRecord,
                 {
+                    "tenant_id": DEVELOPMENT_TENANT_ID,
                     **payload,
                     "country_code": payload.get("country_code") or normalized.get("country_code"),
                     "tax_id": payload.get("tax_id") or normalized.get("tax_id"),
@@ -381,4 +407,6 @@ class CloudStore(PersistenceStore):
                     "currency": payload.get("currency") or normalized.get("currency"),
                 },
             )
+        if entity_name == "finops_usage_records":
+            return _filter_dataclass_payload(UsageRecord, {"tenant_id": DEVELOPMENT_TENANT_ID, **payload})
         return dict(payload)

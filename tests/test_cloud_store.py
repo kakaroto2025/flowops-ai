@@ -63,7 +63,7 @@ class FakeObjectStorage:
         self.generation = 0
 
     def object_path(self, document: Document) -> str:
-        return f"documents/default/{document.id}/{document.file_name}"
+        return f"documents/{document.tenant_id}/{document.id}/{document.file_name}"
 
     def upload_bytes(self, object_path: str, content: bytes, content_type: str) -> str:
         if self.fail_uploads:
@@ -253,12 +253,19 @@ class CloudStoreTests(unittest.TestCase):
         store = self.store(storage=storage)
         document = store_document("doc_000123", "job_000001", file_name="invoice.pdf")
 
-        self.assertEqual(store.object_path_for_document(document), "documents/default/doc_000123/invoice.pdf")
+        self.assertEqual(store.object_path_for_document(document), "documents/tenant_default/doc_000123/invoice.pdf")
         self.assertEqual(
             store.store_document_bytes(document, b"%PDF-test"),
-            "gs://flowops-test/documents/default/doc_000123/invoice.pdf",
+            "gs://flowops-test/documents/tenant_default/doc_000123/invoice.pdf",
         )
-        self.assertEqual(storage.uploads[0], ("documents/default/doc_000123/invoice.pdf", b"%PDF-test", "application/pdf"))
+        self.assertEqual(storage.uploads[0], ("documents/tenant_default/doc_000123/invoice.pdf", b"%PDF-test", "application/pdf"))
+
+    def test_object_path_is_tenant_scoped(self):
+        store = self.store(storage=FakeObjectStorage())
+        document = store_document("doc_000123", "job_000001", file_name="invoice.pdf")
+        document.tenant_id = "tenant_acme"
+
+        self.assertEqual(store.object_path_for_document(document), "documents/tenant_acme/doc_000123/invoice.pdf")
 
     def test_storage_same_path_overwrite_uses_current_generation(self):
         from shared.models.cloud_store import CloudStorageRepository
@@ -295,7 +302,7 @@ class CloudStoreTests(unittest.TestCase):
         self.assertEqual(first_uri, second_uri)
         self.assertEqual(store.read_document_bytes(document), b"%PDF-test")
         self.assertGreater(second_metadata["generation"], first_metadata["generation"])
-        self.assertEqual(list(storage.objects), ["documents/default/doc_000123/invoice.pdf"])
+        self.assertEqual(list(storage.objects), ["documents/tenant_default/doc_000123/invoice.pdf"])
 
     def test_cloud_store_same_path_different_content_overwrites_explicitly(self):
         storage = FakeObjectStorage()
@@ -401,6 +408,24 @@ class CloudStoreTests(unittest.TestCase):
         self.assertEqual(len(store.erp_records), 1)
         self.assertEqual([item[0] for item in firestore.upserts].count("flowops_erp_records"), 1)
 
+    def test_erp_deduplication_is_tenant_scoped(self):
+        store = self.store()
+        first = store.add_erp_record(store_erp("erp_000001", "job_000001", "doc_000001", tenant_id="tenant_a"))
+        second = store.add_erp_record(store_erp("erp_000002", "job_000002", "doc_000002", tenant_id="tenant_b"))
+
+        self.assertEqual(first.id, "erp_000001")
+        self.assertEqual(second.id, "erp_000002")
+        self.assertEqual(len(store.erp_records), 2)
+        self.assertIsNone(
+            store.find_registered_invoice(
+                cnpj=first.cnpj,
+                invoice_number=first.invoice_number,
+                country_code=first.country_code,
+                tax_id=first.tax_id,
+                tenant_id="tenant_missing",
+            )
+        )
+
     def test_audit_human_review_and_queries(self):
         store = self.store()
         job = store.add_job(store_job("job_000001"))
@@ -472,7 +497,7 @@ def store_event(
     )
 
 
-def store_erp(erp_id: str, job_id: str, document_id: str) -> ERPRecord:
+def store_erp(erp_id: str, job_id: str, document_id: str, tenant_id: str = "tenant_default") -> ERPRecord:
     return ERPRecord(
         id=erp_id,
         job_id=job_id,
@@ -480,6 +505,7 @@ def store_erp(erp_id: str, job_id: str, document_id: str) -> ERPRecord:
         invoice_number="INV-001",
         cnpj="12.345.678/0001-90",
         total_amount=100.0,
+        tenant_id=tenant_id,
         company_name="Cloud Store Test Ltda",
         country_code="BR",
         tax_id="12.345.678/0001-90",

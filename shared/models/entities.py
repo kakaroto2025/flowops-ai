@@ -5,6 +5,8 @@ from datetime import datetime, timezone
 from enum import StrEnum
 from typing import Any
 
+from .auth_context import DEVELOPMENT_TENANT_ID, DEVELOPMENT_USER_ID
+
 
 def utc_now() -> str:
     return datetime.now(timezone.utc).isoformat()
@@ -38,6 +40,8 @@ class Job:
     id: str
     source: str
     status: str = JobStatus.CREATED
+    tenant_id: str = DEVELOPMENT_TENANT_ID
+    user_id: str = DEVELOPMENT_USER_ID
     processing_region: str = "AUTO"
     document_count: int = 0
     processed_count: int = 0
@@ -57,6 +61,7 @@ class Document:
     job_id: str
     file_name: str
     storage_path: str
+    tenant_id: str = DEVELOPMENT_TENANT_ID
     status: str = DocumentStatus.UPLOADED
     processing_region: str = "AUTO"
     retry_count: int = 0
@@ -78,6 +83,7 @@ class Extraction:
     issue_date: str | None
     total_amount: float | None
     confidence: float
+    tenant_id: str = DEVELOPMENT_TENANT_ID
     country_code: str | None = None
     country_confidence: float = 0.0
     tax_id: str | None = None
@@ -99,6 +105,7 @@ class AgentEvent:
     agent: str
     event_type: str
     message: str
+    tenant_id: str = DEVELOPMENT_TENANT_ID
     document_id: str | None = None
     data: dict[str, Any] = field(default_factory=dict)
     created_at: str = field(default_factory=utc_now)
@@ -113,6 +120,7 @@ class HumanReview:
     job_id: str
     document_id: str
     reason: str
+    tenant_id: str = DEVELOPMENT_TENANT_ID
     status: str = "OPEN"
     suggested_fields: dict[str, Any] = field(default_factory=dict)
     reviewed_by: str | None = None
@@ -131,6 +139,7 @@ class ERPRecord:
     invoice_number: str
     cnpj: str
     total_amount: float
+    tenant_id: str = DEVELOPMENT_TENANT_ID
     company_name: str | None = None
     issue_date: str | None = None
     country_code: str | None = None

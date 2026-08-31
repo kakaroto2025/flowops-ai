@@ -17,6 +17,7 @@ class DecisionAgent(BaseAgent):
             tax_id=extraction.tax_id,
             normalized_tax_id=extraction.normalized_tax_id,
             normalized_invoice_number=extraction.normalized_invoice_number,
+            tenant_id=extraction.tenant_id,
         )
 
     def _duplicate_event_data(self, extraction: Extraction, duplicate) -> dict:
@@ -71,6 +72,7 @@ class DecisionAgent(BaseAgent):
                 job_id=document.job_id,
                 document_id=document.id,
                 reason=", ".join(validation["errors"]) or "validation_failed",
+                tenant_id=document.tenant_id,
                 suggested_fields=extraction.to_dict(),
             )
             self.store.add_human_review(review)

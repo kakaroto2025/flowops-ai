@@ -82,7 +82,7 @@ class UsageRecord:
     job_id: str
     document_id: str
     timestamp: str = field(default_factory=utc_now)
-    tenant_id: str = "default"
+    tenant_id: str = "tenant_default"
     document_type: str | None = None
     country: str | None = None
     file_size_bytes: int | None = None

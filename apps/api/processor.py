@@ -8,15 +8,16 @@ from agents.document import DocumentAgent
 from agents.intake import IntakeAgent
 from agents.reporting import ReportingAgent
 from agents.validation import ValidationAgent
-from shared.models import AgentEvent, DocumentStatus, Job, PersistenceStore
+from shared.models import AgentEvent, AuthContext, DocumentStatus, Job, PersistenceStore, development_auth_context
 from shared.models.entities import utc_now
 from tools.documents.normalization import normalize_extraction_payload
 from tools.finops import CostGuard, UsageTracker
 
 
 class JobProcessor:
-    def __init__(self, store: PersistenceStore):
+    def __init__(self, store: PersistenceStore, auth_context: AuthContext | None = None):
         self.store = store
+        self.auth_context = auth_context or development_auth_context()
         self.intake = IntakeAgent(store)
         self.usage_tracker = UsageTracker(store)
         self.cost_guard = CostGuard(self.usage_tracker)
@@ -38,13 +39,23 @@ class JobProcessor:
         files = sorted(Path(sample_dir).glob("*.pdf"))
         if not files:
             raise FileNotFoundError(f"No sample PDFs found in {sample_dir}")
-        return self.intake.create_job(files, source="demo_alfa_contabilidade", processing_region=processing_region)
+        return self.intake.create_job(
+            files,
+            source="demo_alfa_contabilidade",
+            processing_region=processing_region,
+            auth_context=self.auth_context,
+        )
 
     def create_upload_job(self, files: list[str | Path], processing_region: str = "AUTO") -> Job:
         paths = [Path(file) for file in files]
         if not paths:
             raise ValueError("No uploaded PDFs provided")
-        return self.intake.create_job(paths, source="manual_upload", processing_region=processing_region)
+        return self.intake.create_job(
+            paths,
+            source="manual_upload",
+            processing_region=processing_region,
+            auth_context=self.auth_context,
+        )
 
     def run_job(self, job_id: str) -> dict:
         return self.adk_orchestrator.run_job(job_id)
@@ -188,6 +199,7 @@ class JobProcessor:
             agent=agent,
             event_type=event_type,
             message=message,
+            tenant_id=self.store.jobs[job_id].tenant_id,
             data=data or {},
         )
         return self.store.add_event(event)

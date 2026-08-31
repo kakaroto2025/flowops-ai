@@ -148,6 +148,7 @@ class DocumentAgent(BaseAgent):
             issue_date=result.get("issue_date"),
             total_amount=result.get("total_amount"),
             confidence=result.get("confidence") or 0.0,
+            tenant_id=document.tenant_id,
             country_code=result.get("country_code"),
             country_confidence=result.get("country_confidence") or 0.0,
             tax_id=result.get("tax_id"),

@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Any
 
 from .entities import AgentEvent, Document, ERPRecord, Extraction, HumanReview, Job, utc_now
+from .auth_context import DEVELOPMENT_TENANT_ID, TenantContextError
 from .persistence import PersistenceStore
 from tools.finops.models import UsageRecord
 from tools.documents.normalization import business_key, normalize_extraction_payload
@@ -95,7 +96,7 @@ class LocalStore(PersistenceStore):
         self.jobs = {k: Job(**self._compatible_job_payload(v)) for k, v in payload.get("jobs", {}).items()}
         self.documents = {k: Document(**self._compatible_document_payload(v)) for k, v in payload.get("documents", {}).items()}
         self.extractions = {k: Extraction(**self._compatible_extraction_payload(v)) for k, v in payload.get("extractions", {}).items()}
-        self.events = {k: AgentEvent(**v) for k, v in payload.get("events", {}).items()}
+        self.events = {k: AgentEvent(**self._compatible_event_payload(v)) for k, v in payload.get("events", {}).items()}
         self.human_reviews = {
             k: HumanReview(**self._compatible_human_review_payload(v)) for k, v in payload.get("human_reviews", {}).items()
         }
@@ -106,16 +107,19 @@ class LocalStore(PersistenceStore):
         }
 
     def _compatible_job_payload(self, payload: dict[str, Any]) -> dict[str, Any]:
-        return _filter_dataclass_payload(Job, {"processing_region": "AUTO", **payload})
+        return _filter_dataclass_payload(Job, {"tenant_id": DEVELOPMENT_TENANT_ID, "processing_region": "AUTO", **payload})
 
     def _compatible_document_payload(self, payload: dict[str, Any]) -> dict[str, Any]:
-        return _filter_dataclass_payload(Document, {"processing_region": "AUTO", **payload})
+        return _filter_dataclass_payload(Document, {"tenant_id": DEVELOPMENT_TENANT_ID, "processing_region": "AUTO", **payload})
 
     def _compatible_extraction_payload(self, payload: dict[str, Any]) -> dict[str, Any]:
         return _filter_dataclass_payload(
             Extraction,
-            normalize_extraction_payload(payload, processing_region=payload.get("country_code") or "AUTO"),
+            {"tenant_id": DEVELOPMENT_TENANT_ID, **normalize_extraction_payload(payload, processing_region=payload.get("country_code") or "AUTO")},
         )
+
+    def _compatible_event_payload(self, payload: dict[str, Any]) -> dict[str, Any]:
+        return _filter_dataclass_payload(AgentEvent, {"tenant_id": DEVELOPMENT_TENANT_ID, **payload})
 
     def _compatible_human_review_payload(self, payload: dict[str, Any]) -> dict[str, Any]:
         suggested_fields = payload.get("suggested_fields")
@@ -127,13 +131,14 @@ class LocalStore(PersistenceStore):
                     processing_region=suggested_fields.get("country_code") or "AUTO",
                 ),
             }
-        return _filter_dataclass_payload(HumanReview, payload)
+        return _filter_dataclass_payload(HumanReview, {"tenant_id": DEVELOPMENT_TENANT_ID, **payload})
 
     def _compatible_erp_payload(self, payload: dict[str, Any]) -> dict[str, Any]:
         normalized = normalize_extraction_payload(payload, processing_region=payload.get("country_code") or "AUTO")
         return _filter_dataclass_payload(
             ERPRecord,
             {
+                "tenant_id": DEVELOPMENT_TENANT_ID,
                 **payload,
                 "country_code": payload.get("country_code") or normalized.get("country_code"),
                 "tax_id": payload.get("tax_id") or normalized.get("tax_id"),
@@ -146,7 +151,7 @@ class LocalStore(PersistenceStore):
         )
 
     def _compatible_finops_usage_payload(self, payload: dict[str, Any]) -> dict[str, Any]:
-        return _filter_dataclass_payload(UsageRecord, payload)
+        return _filter_dataclass_payload(UsageRecord, {"tenant_id": DEVELOPMENT_TENANT_ID, **payload})
 
     def _atomic_write_json(self, payload: dict[str, Any]) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)
@@ -281,6 +286,7 @@ class LocalStore(PersistenceStore):
         tax_id: str | None = None,
         normalized_tax_id: str | None = None,
         normalized_invoice_number: str | None = None,
+        tenant_id: str | None = None,
     ) -> ERPRecord | None:
         lookup_key = business_key(
             {
@@ -295,6 +301,8 @@ class LocalStore(PersistenceStore):
         if not lookup_key:
             return None
         for record in self.erp_records.values():
+            if tenant_id is not None and record.tenant_id != tenant_id:
+                continue
             if business_key(record) == lookup_key:
                 return record
         return None
@@ -304,6 +312,24 @@ class LocalStore(PersistenceStore):
             [review for review in self.human_reviews.values() if review.status == "OPEN"],
             key=lambda review: review.created_at,
         )
+
+    def job_for_tenant(self, tenant_id: str, job_id: str) -> Job:
+        job = self.jobs[job_id]
+        if job.tenant_id != tenant_id:
+            raise TenantContextError("job does not belong to tenant")
+        return job
+
+    def document_for_tenant(self, tenant_id: str, document_id: str) -> Document:
+        document = self.documents[document_id]
+        if document.tenant_id != tenant_id:
+            raise TenantContextError("document does not belong to tenant")
+        return document
+
+    def review_for_tenant(self, tenant_id: str, review_id: str) -> HumanReview:
+        review = self.human_reviews[review_id]
+        if review.tenant_id != tenant_id:
+            raise TenantContextError("review does not belong to tenant")
+        return review
 
     def object_path_for_document(self, document: Document) -> str:
         return document.storage_path

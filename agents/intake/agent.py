@@ -3,20 +3,29 @@ from __future__ import annotations
 from pathlib import Path
 
 from agents.base import BaseAgent
-from shared.models import Document, DocumentStatus, Job, JobStatus
+from shared.models import AuthContext, Document, DocumentStatus, Job, JobStatus, require_tenant_id
 from tools.documents.normalization import normalize_region
 
 
 class IntakeAgent(BaseAgent):
     name = "IntakeAgent"
 
-    def create_job(self, files: list[Path], source: str = "manual_upload", processing_region: str = "AUTO") -> Job:
+    def create_job(
+        self,
+        files: list[Path],
+        source: str = "manual_upload",
+        processing_region: str = "AUTO",
+        auth_context: AuthContext | None = None,
+    ) -> Job:
+        tenant_id = require_tenant_id(auth_context)
         region = normalize_region(processing_region)
         job = self.store.add_job(
             Job(
                 id=self.store.next_id("job"),
                 source=source,
                 status=JobStatus.CREATED,
+                tenant_id=tenant_id,
+                user_id=auth_context.user_id,
                 processing_region=region,
                 document_count=len(files),
             )
@@ -29,6 +38,7 @@ class IntakeAgent(BaseAgent):
                 job_id=job.id,
                 file_name=file_path.name,
                 storage_path=str(file_path),
+                tenant_id=tenant_id,
                 status=DocumentStatus.QUEUED,
                 processing_region=region,
             )
