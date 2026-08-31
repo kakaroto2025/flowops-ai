@@ -33,12 +33,26 @@ class IntakeAgent(BaseAgent):
                 processing_region=region,
             )
             self.store.add_document(document)
+            object_uri = self.store.store_document_bytes(document, file_path.read_bytes(), _content_type(file_path))
             self.event(
                 job.id,
                 "DOCUMENT_QUEUED",
                 f"Queued document {file_path.name}.",
                 document_id=document.id,
             )
+            self.event(
+                job.id,
+                "DOCUMENT_STORED",
+                "Stored document through persistence backend.",
+                document_id=document.id,
+                data={"object_uri": object_uri},
+            )
 
         self.store.update_job(job.id, status=JobStatus.PROCESSING)
         return self.store.jobs[job.id]
+
+
+def _content_type(path: Path) -> str:
+    if path.suffix.lower() == ".pdf":
+        return "application/pdf"
+    return "application/octet-stream"

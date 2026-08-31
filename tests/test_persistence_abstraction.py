@@ -8,6 +8,7 @@ from unittest.mock import patch
 
 from apps.api.processor import JobProcessor
 from shared.models import (
+    CloudStore,
     LocalStore,
     PersistenceConfigurationError,
     PersistenceStore,
@@ -15,6 +16,36 @@ from shared.models import (
     normalize_storage_mode,
 )
 from tools.reporting import build_global_human_review_queue
+
+
+class TrackingStore(LocalStore):
+    def __init__(self, path: Path):
+        super().__init__(path)
+        self.object_uploads: list[dict] = []
+
+    def store_document_bytes(self, document, content: bytes, content_type: str = "application/pdf") -> str:
+        self.object_uploads.append(
+            {
+                "document_id": document.id,
+                "storage_path": document.storage_path,
+                "content": content,
+                "content_type": content_type,
+            }
+        )
+        return f"tracked://{document.id}/{document.file_name}"
+
+
+class FailingObjectStore(TrackingStore):
+    def store_document_bytes(self, document, content: bytes, content_type: str = "application/pdf") -> str:
+        self.object_uploads.append(
+            {
+                "document_id": document.id,
+                "storage_path": document.storage_path,
+                "content": content,
+                "content_type": content_type,
+            }
+        )
+        raise PersistenceConfigurationError("object storage unavailable")
 
 
 class PersistenceAbstractionTests(unittest.TestCase):
@@ -71,6 +102,25 @@ class PersistenceAbstractionTests(unittest.TestCase):
 
     def processor(self, store: PersistenceStore) -> JobProcessor:
         return JobProcessor(store)
+
+    def test_cloud_mode_creates_cloud_store_when_config_is_valid(self):
+        with patch.dict(
+            os.environ,
+            {
+                "STORAGE_MODE": "cloud",
+                "GOOGLE_CLOUD_PROJECT": "flowops-test",
+                "FIRESTORE_DATABASE": "(default)",
+                "FLOWOPS_STORAGE_BUCKET": "flowops-test-bucket",
+            },
+            clear=True,
+        ):
+            with (
+                patch("shared.models.cloud_store.FirestoreRepository"),
+                patch("shared.models.cloud_store.CloudStorageRepository"),
+            ):
+                store = create_persistence_store()
+
+        self.assertIsInstance(store, CloudStore)
 
     def test_default_storage_mode_is_local(self):
         with patch.dict(os.environ, {}, clear=True):
@@ -139,6 +189,29 @@ class PersistenceAbstractionTests(unittest.TestCase):
         review_events = [event.event_type for event in store.events_for_job(review_job.id)]
         self.assertIn("ADK_WORKFLOW_STARTED", review_events)
         self.assertIn("DECISION_HUMAN_REVIEW", review_events)
+
+    def test_pipeline_stores_uploaded_document_through_persistence_abstraction(self):
+        store = TrackingStore(self.root / "state.json")
+        processor = self.processor(store)
+
+        job = processor.create_upload_job([self.invoice("NF_ABSTRACTION_STORAGE.pdf")])
+
+        self.assertEqual(len(store.object_uploads), 1)
+        upload = store.object_uploads[0]
+        self.assertEqual(upload["document_id"], "doc_000001")
+        self.assertEqual(upload["content_type"], "application/pdf")
+        self.assertIn(b"Abstraction Test Ltda", upload["content"])
+        events = [event.event_type for event in store.events_for_job(job.id)]
+        self.assertIn("DOCUMENT_STORED", events)
+
+    def test_pipeline_does_not_silently_fallback_when_storage_backend_fails(self):
+        store = FailingObjectStore(self.root / "state.json")
+        processor = self.processor(store)
+
+        with self.assertRaisesRegex(PersistenceConfigurationError, "object storage unavailable"):
+            processor.create_upload_job([self.invoice("NF_ABSTRACTION_STORAGE_FAIL.pdf")])
+
+        self.assertEqual(len(store.object_uploads), 1)
 
 
 if __name__ == "__main__":

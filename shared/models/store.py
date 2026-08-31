@@ -304,3 +304,23 @@ class LocalStore(PersistenceStore):
             [review for review in self.human_reviews.values() if review.status == "OPEN"],
             key=lambda review: review.created_at,
         )
+
+    def object_path_for_document(self, document: Document) -> str:
+        return document.storage_path
+
+    def store_document_bytes(self, document: Document, content: bytes, content_type: str = "application/pdf") -> str:
+        return document.storage_path
+
+    def document_object_metadata(self, document: Document) -> dict[str, Any]:
+        path = Path(document.storage_path)
+        return {
+            "name": document.storage_path,
+            "size": path.stat().st_size,
+            "content_type": "application/pdf",
+        }
+
+    def read_document_bytes(self, document: Document) -> bytes:
+        return Path(document.storage_path).read_bytes()
+
+    def delete_document_object(self, document: Document) -> None:
+        Path(document.storage_path).unlink(missing_ok=True)
