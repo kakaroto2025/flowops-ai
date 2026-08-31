@@ -47,6 +47,9 @@ class FirestoreBackend(Protocol):
 class ObjectStorageBackend(Protocol):
     def object_path(self, document: Document) -> str: ...
     def upload_bytes(self, object_path: str, content: bytes, content_type: str) -> str: ...
+    def metadata(self, object_path: str) -> dict[str, Any]: ...
+    def download_bytes(self, object_path: str) -> bytes: ...
+    def delete(self, object_path: str) -> None: ...
 
 
 class FirestoreRepository:
@@ -82,9 +85,31 @@ class CloudStorageRepository:
         return f"documents/default/{document.id}/{safe_name}"
 
     def upload_bytes(self, object_path: str, content: bytes, content_type: str) -> str:
-        blob = self.bucket.blob(object_path)
+        blob = self._fresh_blob(object_path)
         blob.upload_from_string(content, content_type=content_type)
         return f"gs://{self.bucket.name}/{object_path}"
+
+    def metadata(self, object_path: str) -> dict[str, Any]:
+        blob = self._fresh_blob(object_path)
+        blob.reload()
+        return {
+            "name": blob.name,
+            "bucket": self.bucket.name,
+            "size": blob.size,
+            "content_type": blob.content_type,
+            "generation": blob.generation,
+            "metageneration": blob.metageneration,
+            "updated": blob.updated.isoformat() if blob.updated else None,
+        }
+
+    def download_bytes(self, object_path: str) -> bytes:
+        return self._fresh_blob(object_path).download_as_bytes()
+
+    def delete(self, object_path: str) -> None:
+        self._fresh_blob(object_path).delete()
+
+    def _fresh_blob(self, object_path: str):
+        return self.bucket.blob(object_path)
 
 
 def _filter_dataclass_payload(model: type, payload: dict[str, Any]) -> dict[str, Any]:
@@ -279,6 +304,18 @@ class CloudStore(PersistenceStore):
             return self.object_storage.upload_bytes(object_path, content, content_type)
         except Exception as exc:
             raise PersistenceConfigurationError(f"CloudStore object upload failed for {object_path}.") from exc
+
+    def document_object_metadata(self, document: Document) -> dict[str, Any]:
+        object_path = self.object_storage.object_path(document)
+        return self.object_storage.metadata(object_path)
+
+    def read_document_bytes(self, document: Document) -> bytes:
+        object_path = self.object_storage.object_path(document)
+        return self.object_storage.download_bytes(object_path)
+
+    def delete_document_object(self, document: Document) -> None:
+        object_path = self.object_storage.object_path(document)
+        self.object_storage.delete(object_path)
 
     def _persist(self, entity_name: str, document_id: str, payload: dict[str, Any]) -> None:
         collection = self.COLLECTIONS[entity_name]

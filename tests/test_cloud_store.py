@@ -40,6 +40,8 @@ class FakeObjectStorage:
     def __init__(self, fail_uploads: bool = False):
         self.fail_uploads = fail_uploads
         self.uploads: list[tuple[str, bytes, str]] = []
+        self.objects: dict[str, dict] = {}
+        self.generation = 0
 
     def object_path(self, document: Document) -> str:
         return f"documents/default/{document.id}/{document.file_name}"
@@ -48,7 +50,93 @@ class FakeObjectStorage:
         if self.fail_uploads:
             raise RuntimeError("storage unavailable")
         self.uploads.append((object_path, content, content_type))
+        self.generation += 1
+        self.objects[object_path] = {
+            "content": content,
+            "content_type": content_type,
+            "generation": self.generation,
+            "metageneration": 1,
+            "name": object_path,
+            "size": len(content),
+        }
         return f"gs://flowops-test/{object_path}"
+
+    def metadata(self, object_path: str) -> dict:
+        if object_path not in self.objects:
+            raise FileNotFoundError(object_path)
+        stored = self.objects[object_path]
+        return {key: value for key, value in stored.items() if key != "content"}
+
+    def download_bytes(self, object_path: str) -> bytes:
+        if object_path not in self.objects:
+            raise FileNotFoundError(object_path)
+        return self.objects[object_path]["content"]
+
+    def delete(self, object_path: str) -> None:
+        if object_path not in self.objects:
+            raise FileNotFoundError(object_path)
+        del self.objects[object_path]
+
+
+class GenerationBoundBucket:
+    def __init__(self):
+        self.name = "flowops-test-bucket"
+        self.objects: dict[str, dict] = {}
+        self.generation = 0
+        self.blob_calls: list[str] = []
+
+    def blob(self, object_path: str):
+        self.blob_calls.append(object_path)
+        return GenerationBoundBlob(self, object_path)
+
+
+class GenerationBoundBlob:
+    def __init__(self, bucket: GenerationBoundBucket, name: str):
+        self.bucket = bucket
+        self.name = name
+        self.size = None
+        self.content_type = None
+        self.generation = None
+        self.metageneration = None
+        self.updated = None
+
+    def upload_from_string(self, content: bytes, content_type: str) -> None:
+        self.bucket.generation += 1
+        self.bucket.objects[self.name] = {
+            "content": content,
+            "content_type": content_type,
+            "generation": self.bucket.generation,
+            "metageneration": 1,
+            "size": len(content),
+        }
+        self._load_current()
+
+    def reload(self) -> None:
+        self._raise_if_missing_or_stale()
+        self._load_current()
+
+    def download_as_bytes(self) -> bytes:
+        self._raise_if_missing_or_stale()
+        self._load_current()
+        return self.bucket.objects[self.name]["content"]
+
+    def delete(self) -> None:
+        self._raise_if_missing_or_stale()
+        del self.bucket.objects[self.name]
+
+    def _raise_if_missing_or_stale(self) -> None:
+        stored = self.bucket.objects.get(self.name)
+        if stored is None:
+            raise FileNotFoundError(self.name)
+        if self.generation is not None and self.generation != stored["generation"]:
+            raise FileNotFoundError("stale generation")
+
+    def _load_current(self) -> None:
+        stored = self.bucket.objects[self.name]
+        self.size = stored["size"]
+        self.content_type = stored["content_type"]
+        self.generation = stored["generation"]
+        self.metageneration = stored["metageneration"]
 
 
 class CloudStoreTests(unittest.TestCase):
@@ -151,6 +239,64 @@ class CloudStoreTests(unittest.TestCase):
             "gs://flowops-test/documents/default/doc_000123/invoice.pdf",
         )
         self.assertEqual(storage.uploads[0], ("documents/default/doc_000123/invoice.pdf", b"%PDF-test", "application/pdf"))
+
+    def test_storage_same_path_overwrite_uses_current_generation(self):
+        from shared.models.cloud_store import CloudStorageRepository
+
+        repository = CloudStorageRepository.__new__(CloudStorageRepository)
+        repository.bucket = GenerationBoundBucket()
+        object_path = "pilot-v2/smoke-test/persistence-smoke-test.txt"
+
+        stale_blob = repository.bucket.blob(object_path)
+        repository.upload_bytes(object_path, b"first", "text/plain")
+        stale_blob.reload()
+        self.assertEqual(stale_blob.generation, 1)
+
+        repository.upload_bytes(object_path, b"second", "text/plain")
+        with self.assertRaises(FileNotFoundError):
+            stale_blob.reload()
+
+        metadata = repository.metadata(object_path)
+        self.assertEqual(metadata["generation"], 2)
+        self.assertEqual(metadata["size"], len(b"second"))
+        self.assertEqual(repository.download_bytes(object_path), b"second")
+        self.assertEqual(list(repository.bucket.objects), [object_path])
+
+    def test_cloud_store_same_path_same_content_is_deterministic(self):
+        storage = FakeObjectStorage()
+        store = self.store(storage=storage)
+        document = store_document("doc_000123", "job_000001", file_name="invoice.pdf")
+
+        first_uri = store.store_document_bytes(document, b"%PDF-test")
+        first_metadata = store.document_object_metadata(document)
+        second_uri = store.store_document_bytes(document, b"%PDF-test")
+        second_metadata = store.document_object_metadata(document)
+
+        self.assertEqual(first_uri, second_uri)
+        self.assertEqual(store.read_document_bytes(document), b"%PDF-test")
+        self.assertGreater(second_metadata["generation"], first_metadata["generation"])
+        self.assertEqual(list(storage.objects), ["documents/default/doc_000123/invoice.pdf"])
+
+    def test_cloud_store_same_path_different_content_overwrites_explicitly(self):
+        storage = FakeObjectStorage()
+        store = self.store(storage=storage)
+        document = store_document("doc_000123", "job_000001", file_name="invoice.pdf")
+
+        store.store_document_bytes(document, b"old")
+        store.store_document_bytes(document, b"new")
+
+        self.assertEqual(store.read_document_bytes(document), b"new")
+        self.assertEqual(store.document_object_metadata(document)["size"], len(b"new"))
+        self.assertEqual(len(storage.objects), 1)
+
+    def test_cloud_store_missing_object_remains_error(self):
+        store = self.store()
+        document = store_document("doc_000404", "job_000001", file_name="missing.pdf")
+
+        with self.assertRaises(FileNotFoundError):
+            store.document_object_metadata(document)
+        with self.assertRaises(FileNotFoundError):
+            store.read_document_bytes(document)
 
     def test_erp_deduplication_is_idempotent(self):
         firestore = FakeFirestoreBackend()
