@@ -11,6 +11,7 @@ from agents.validation import ValidationAgent
 from shared.models import AgentEvent, AuthContext, DocumentStatus, Job, PersistenceStore, development_auth_context
 from shared.models.entities import utc_now
 from tools.documents.normalization import normalize_extraction_payload
+from tools.email_intake import EmailIntakeProvider, EmailIntakeResult, EmailIntakeService, NormalizedEmailMessage
 from tools.finops import CostGuard, UsageTracker
 
 
@@ -34,6 +35,13 @@ class JobProcessor:
             cost_guard=self.cost_guard,
             usage_tracker=self.usage_tracker,
         )
+        self.email_intake = EmailIntakeService(
+            self.store,
+            self.auth_context,
+            self.cost_guard,
+            submit_files=lambda files, region: self.create_email_job(files, processing_region=region),
+            run_job=self.run_job,
+        )
 
     def create_demo_job(self, sample_dir: str | Path = "sample_data/alfa_contabilidade", processing_region: str = "AUTO") -> Job:
         files = sorted(Path(sample_dir).glob("*.pdf"))
@@ -47,12 +55,38 @@ class JobProcessor:
         )
 
     def create_upload_job(self, files: list[str | Path], processing_region: str = "AUTO") -> Job:
+        return self._create_file_job(files, source="manual_upload", processing_region=processing_region)
+
+    def create_email_job(self, files: list[str | Path], processing_region: str = "AUTO") -> Job:
+        return self._create_file_job(files, source="email_intake", processing_region=processing_region)
+
+    def process_email_message(
+        self,
+        message: NormalizedEmailMessage,
+        processing_region: str = "AUTO",
+        work_dir: str | Path = "local_data/email_intake",
+    ) -> EmailIntakeResult:
+        if Path(work_dir) != self.email_intake.work_dir:
+            self.email_intake.work_dir = Path(work_dir)
+        return self.email_intake.process_message(message, processing_region=processing_region)
+
+    def process_email_provider(
+        self,
+        provider: EmailIntakeProvider,
+        processing_region: str = "AUTO",
+        work_dir: str | Path = "local_data/email_intake",
+    ) -> list[EmailIntakeResult]:
+        if Path(work_dir) != self.email_intake.work_dir:
+            self.email_intake.work_dir = Path(work_dir)
+        return self.email_intake.process_provider(provider, processing_region=processing_region)
+
+    def _create_file_job(self, files: list[str | Path], source: str, processing_region: str = "AUTO") -> Job:
         paths = [Path(file) for file in files]
         if not paths:
             raise ValueError("No uploaded PDFs provided")
         return self.intake.create_job(
             paths,
-            source="manual_upload",
+            source=source,
             processing_region=processing_region,
             auth_context=self.auth_context,
         )
