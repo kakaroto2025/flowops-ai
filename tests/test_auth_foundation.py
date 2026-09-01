@@ -183,6 +183,15 @@ class AuthFoundationTests(unittest.TestCase):
 
         factory.assert_called_once()
 
+    def test_firebase_auth_provider_factory_reads_project_id_without_name_error(self):
+        with (
+            patch.dict(os.environ, {"AUTH_MODE": "firebase", "FIREBASE_PROJECT_ID": "flowops-test"}, clear=False),
+            patch("apps.api.auth.FirebaseAuthProvider") as provider_factory,
+        ):
+            api_auth.get_auth_provider()
+
+        provider_factory.assert_called_once_with(project_id="flowops-test")
+
     def test_client_tenant_id_cannot_override_authenticated_tenant(self):
         invoice = Path(self.tmp.name) / "tenant_override.pdf"
         invoice.write_text(
