@@ -27,6 +27,7 @@ class FakeFirestoreBackend:
         self.fail_writes = fail_writes
         self.fail_counters = fail_counters
         self.upserts: list[tuple[str, str, dict]] = []
+        self.documents: dict[str, dict] = {}
         self.deleted_collections: list[str] = []
         self.counters: dict[str, dict[str, int]] = {}
         self.counter_allocations: list[tuple[str, str, str, int]] = []
@@ -50,9 +51,30 @@ class FakeFirestoreBackend:
         if self.fail_writes:
             raise RuntimeError("firestore unavailable")
         self.upserts.append((collection, document_id, payload))
+        self.documents[f"{collection}/{document_id}"] = dict(payload)
+
+    def get(self, collection: str, document_id: str) -> dict | None:
+        self.query_count += 1
+        payload = self.documents.get(f"{collection}/{document_id}")
+        return dict(payload) if payload else None
+
+    def claim_email_receipt(self, collection: str, document_id: str, payload: dict) -> tuple[bool, dict | None]:
+        if self.fail_writes:
+            raise RuntimeError("firestore unavailable")
+        with self.counter_lock:
+            self.transaction_count += 1
+            key = f"{collection}/{document_id}"
+            existing = self.documents.get(key)
+            if existing and existing.get("status") in {"PROCESSING", "COMPLETED"}:
+                return False, dict(existing)
+            self.documents[key] = dict(payload)
+            return True, dict(payload)
 
     def delete_collection(self, collection: str) -> None:
         self.deleted_collections.append(collection)
+        for key in list(self.documents):
+            if key.startswith(f"{collection}/"):
+                del self.documents[key]
 
 
 class FakeObjectStorage:
@@ -450,6 +472,66 @@ class CloudStoreTests(unittest.TestCase):
 
         with self.assertRaisesRegex(PersistenceConfigurationError, "CloudStore object upload failed"):
             store.store_document_bytes(store_document("doc_000001", "job_000001"), b"%PDF-test")
+
+    def test_email_receipt_claim_is_atomic_and_tenant_scoped(self):
+        firestore = FakeFirestoreBackend()
+        store = self.store(firestore=firestore)
+        receipt = {
+            "id": "receipt-a",
+            "tenant_id": "tenant_a",
+            "provider": "gmail",
+            "provider_message_id": "msg-1",
+            "attachment_id": "att-1",
+            "status": "PROCESSING",
+        }
+
+        claimed, first = store.claim_email_intake_receipt("receipt-a", receipt)
+        duplicate, existing = store.claim_email_intake_receipt("receipt-a", receipt)
+
+        self.assertTrue(claimed)
+        self.assertFalse(duplicate)
+        self.assertEqual(first["tenant_id"], "tenant_a")
+        self.assertEqual(existing["status"], "PROCESSING")
+        self.assertEqual(firestore.transaction_count, 2)
+
+    def test_completed_email_receipt_blocks_after_store_recreation(self):
+        firestore = FakeFirestoreBackend()
+        first_store = self.store(firestore=firestore)
+        payload = {
+            "id": "receipt-restart",
+            "tenant_id": "tenant_a",
+            "provider": "gmail",
+            "provider_message_id": "msg-1",
+            "attachment_id": "att-1",
+            "status": "PROCESSING",
+        }
+        self.assertTrue(first_store.claim_email_intake_receipt("receipt-restart", payload)[0])
+        first_store.complete_email_intake_receipt("receipt-restart", {"job_id": "job_000001", "document_id": "doc_000001"})
+
+        restarted_store = self.store(firestore=firestore)
+        claimed, receipt = restarted_store.claim_email_intake_receipt("receipt-restart", payload)
+
+        self.assertFalse(claimed)
+        self.assertEqual(receipt["status"], "COMPLETED")
+        self.assertEqual(receipt["job_id"], "job_000001")
+
+    def test_failed_email_receipt_can_be_reclaimed_conservatively(self):
+        store = self.store()
+        payload = {
+            "id": "receipt-failed",
+            "tenant_id": "tenant_a",
+            "provider": "gmail",
+            "provider_message_id": "msg-1",
+            "attachment_id": "att-1",
+            "status": "PROCESSING",
+        }
+        self.assertTrue(store.claim_email_intake_receipt("receipt-failed", payload)[0])
+        store.fail_email_intake_receipt("receipt-failed", {"error_type": "RuntimeError"})
+
+        claimed, receipt = store.claim_email_intake_receipt("receipt-failed", payload)
+
+        self.assertTrue(claimed)
+        self.assertEqual(receipt["status"], "PROCESSING")
 
 
 def store_job(job_id: str) -> Job:

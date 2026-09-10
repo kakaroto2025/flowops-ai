@@ -43,6 +43,7 @@ class LocalStore(PersistenceStore):
         self.human_reviews: dict[str, HumanReview] = {}
         self.erp_records: dict[str, ERPRecord] = {}
         self.finops_usage_records: dict[str, UsageRecord] = {}
+        self.email_intake_receipts: dict[str, dict[str, Any]] = {}
         self._counters: dict[str, int] = {}
         self.load()
 
@@ -61,6 +62,7 @@ class LocalStore(PersistenceStore):
                 "human_reviews": {k: asdict(v) for k, v in self.human_reviews.items()},
                 "erp_records": {k: asdict(v) for k, v in self.erp_records.items()},
                 "finops_usage_records": {k: asdict(v) for k, v in self.finops_usage_records.items()},
+                "email_intake_receipts": self.email_intake_receipts,
             }
             self._atomic_write_json(payload)
 
@@ -104,6 +106,9 @@ class LocalStore(PersistenceStore):
         self.finops_usage_records = {
             k: UsageRecord(**self._compatible_finops_usage_payload(v))
             for k, v in payload.get("finops_usage_records", {}).items()
+        }
+        self.email_intake_receipts = {
+            str(k): dict(v) for k, v in payload.get("email_intake_receipts", {}).items()
         }
 
     def _compatible_job_payload(self, payload: dict[str, Any]) -> dict[str, Any]:
@@ -197,6 +202,7 @@ class LocalStore(PersistenceStore):
         self.human_reviews.clear()
         self.erp_records.clear()
         self.finops_usage_records.clear()
+        self.email_intake_receipts.clear()
         self._counters.clear()
         self.save()
 
@@ -350,3 +356,27 @@ class LocalStore(PersistenceStore):
 
     def delete_document_object(self, document: Document) -> None:
         Path(document.storage_path).unlink(missing_ok=True)
+
+    def claim_email_intake_receipt(self, receipt_id: str, payload: dict[str, Any]) -> tuple[bool, dict[str, Any] | None]:
+        existing = self.email_intake_receipts.get(receipt_id)
+        if existing and existing.get("status") in {"PROCESSING", "COMPLETED"}:
+            return False, dict(existing)
+        self.email_intake_receipts[receipt_id] = dict(payload)
+        self.save()
+        return True, dict(payload)
+
+    def complete_email_intake_receipt(self, receipt_id: str, changes: dict[str, Any]) -> dict[str, Any]:
+        receipt = {**self.email_intake_receipts[receipt_id], **changes, "status": "COMPLETED"}
+        self.email_intake_receipts[receipt_id] = receipt
+        self.save()
+        return dict(receipt)
+
+    def fail_email_intake_receipt(self, receipt_id: str, changes: dict[str, Any]) -> dict[str, Any]:
+        receipt = {**self.email_intake_receipts[receipt_id], **changes, "status": "FAILED"}
+        self.email_intake_receipts[receipt_id] = receipt
+        self.save()
+        return dict(receipt)
+
+    def get_email_intake_receipt(self, receipt_id: str) -> dict[str, Any] | None:
+        receipt = self.email_intake_receipts.get(receipt_id)
+        return dict(receipt) if receipt else None

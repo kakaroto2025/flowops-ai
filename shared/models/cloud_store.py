@@ -43,6 +43,8 @@ class CloudStoreConfig:
 class FirestoreBackend(Protocol):
     def allocate_counter(self, collection: str, document_id: str, prefix: str) -> int: ...
     def upsert(self, collection: str, document_id: str, payload: dict[str, Any]) -> None: ...
+    def get(self, collection: str, document_id: str) -> dict[str, Any] | None: ...
+    def claim_email_receipt(self, collection: str, document_id: str, payload: dict[str, Any]) -> tuple[bool, dict[str, Any] | None]: ...
     def delete_collection(self, collection: str) -> None: ...
 
 
@@ -83,6 +85,25 @@ class FirestoreRepository:
 
     def upsert(self, collection: str, document_id: str, payload: dict[str, Any]) -> None:
         self.client.collection(collection).document(document_id).set(payload)
+
+    def get(self, collection: str, document_id: str) -> dict[str, Any] | None:
+        snapshot = self.client.collection(collection).document(document_id).get()
+        return snapshot.to_dict() if snapshot.exists else None
+
+    def claim_email_receipt(self, collection: str, document_id: str, payload: dict[str, Any]) -> tuple[bool, dict[str, Any] | None]:
+        document_ref = self.client.collection(collection).document(document_id)
+        transaction = self.client.transaction()
+
+        @self.firestore.transactional
+        def claim(transaction, receipt_ref, receipt_payload: dict[str, Any]) -> tuple[bool, dict[str, Any] | None]:
+            snapshot = receipt_ref.get(transaction=transaction)
+            existing = snapshot.to_dict() if snapshot.exists else None
+            if existing and existing.get("status") in {"PROCESSING", "COMPLETED"}:
+                return False, existing
+            transaction.set(receipt_ref, receipt_payload)
+            return True, receipt_payload
+
+        return claim(transaction, document_ref, payload)
 
     def delete_collection(self, collection: str) -> None:
         for document in self.client.collection(collection).stream():
@@ -146,6 +167,7 @@ class CloudStore(PersistenceStore):
         "human_reviews": "flowops_human_reviews",
         "erp_records": "flowops_erp_records",
         "finops_usage_records": "flowops_finops_usage_records",
+        "email_intake_receipts": "flowops_email_intake_receipts",
     }
 
     def __init__(
@@ -166,6 +188,7 @@ class CloudStore(PersistenceStore):
         self.human_reviews: dict[str, HumanReview] = {}
         self.erp_records: dict[str, ERPRecord] = {}
         self.finops_usage_records: dict[str, UsageRecord] = {}
+        self.email_intake_receipts: dict[str, dict[str, Any]] = {}
         self._counters: dict[str, int] = {}
 
     def next_id(self, prefix: str) -> str:
@@ -190,6 +213,7 @@ class CloudStore(PersistenceStore):
         self.human_reviews.clear()
         self.erp_records.clear()
         self.finops_usage_records.clear()
+        self.email_intake_receipts.clear()
         self._counters.clear()
         for collection in self.COLLECTIONS.values():
             try:
@@ -410,3 +434,40 @@ class CloudStore(PersistenceStore):
         if entity_name == "finops_usage_records":
             return _filter_dataclass_payload(UsageRecord, {"tenant_id": DEVELOPMENT_TENANT_ID, **payload})
         return dict(payload)
+
+    def claim_email_intake_receipt(self, receipt_id: str, payload: dict[str, Any]) -> tuple[bool, dict[str, Any] | None]:
+        try:
+            claimed, receipt = self.firestore.claim_email_receipt(
+                self.COLLECTIONS["email_intake_receipts"],
+                receipt_id,
+                dict(payload),
+            )
+        except Exception as exc:
+            raise PersistenceConfigurationError(f"CloudStore email receipt claim failed for {receipt_id}.") from exc
+        if receipt:
+            self.email_intake_receipts[receipt_id] = dict(receipt)
+        return claimed, dict(receipt) if receipt else None
+
+    def complete_email_intake_receipt(self, receipt_id: str, changes: dict[str, Any]) -> dict[str, Any]:
+        receipt = {**self.email_intake_receipts.get(receipt_id, {}), **changes, "status": "COMPLETED"}
+        self.email_intake_receipts[receipt_id] = receipt
+        self._persist("email_intake_receipts", receipt_id, receipt)
+        return dict(receipt)
+
+    def fail_email_intake_receipt(self, receipt_id: str, changes: dict[str, Any]) -> dict[str, Any]:
+        receipt = {**self.email_intake_receipts.get(receipt_id, {}), **changes, "status": "FAILED"}
+        self.email_intake_receipts[receipt_id] = receipt
+        self._persist("email_intake_receipts", receipt_id, receipt)
+        return dict(receipt)
+
+    def get_email_intake_receipt(self, receipt_id: str) -> dict[str, Any] | None:
+        if receipt_id in self.email_intake_receipts:
+            return dict(self.email_intake_receipts[receipt_id])
+        try:
+            receipt = self.firestore.get(self.COLLECTIONS["email_intake_receipts"], receipt_id)
+        except Exception as exc:
+            raise PersistenceConfigurationError(f"CloudStore email receipt lookup failed for {receipt_id}.") from exc
+        if receipt:
+            self.email_intake_receipts[receipt_id] = dict(receipt)
+            return dict(receipt)
+        return None

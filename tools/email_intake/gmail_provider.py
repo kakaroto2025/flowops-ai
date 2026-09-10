@@ -30,6 +30,8 @@ class GmailClient(Protocol):
 
 
 class GmailEmailIntakeProvider(EmailIntakeProvider):
+    provider_name = "gmail"
+
     def __init__(self, client: GmailClient, message_ids: list[str]):
         self.client = client
         self.message_ids = list(message_ids)

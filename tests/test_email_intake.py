@@ -165,6 +165,28 @@ class EmailIntakeFoundationTests(unittest.TestCase):
         self.assertIsNone(second.submitted_job_id)
         self.assertEqual(second.duplicate[0].reason, "email_attachment_already_processed")
         self.assertEqual(len(self.store.jobs), 1)
+        receipts = list(self.store.email_intake_receipts.values())
+        self.assertEqual(len(receipts), 1)
+        self.assertEqual(receipts[0]["status"], "COMPLETED")
+        self.assertEqual(receipts[0]["tenant_id"], "tenant_email")
+        self.assertEqual(receipts[0]["provider"], "email")
+
+    def test_email_idempotency_survives_store_reload(self):
+        message = self.message()
+        first_processor = self.processor()
+
+        with patch("agents.document.agent.extract_with_gemini", return_value=self.gemini_payload()):
+            first = first_processor.process_email_message(message, work_dir=self.root / "email")
+
+        reloaded_store = LocalStore(self.root / "state.json")
+        second_processor = JobProcessor(reloaded_store, auth_context=AuthContext("user_email", "tenant_email", authenticated=True))
+        second = second_processor.process_email_message(message, work_dir=self.root / "email")
+
+        self.assertIsNotNone(first.submitted_job_id)
+        self.assertIsNone(second.submitted_job_id)
+        self.assertEqual(second.duplicate[0].reason, "email_attachment_already_processed")
+        self.assertEqual(len(reloaded_store.jobs), 1)
+        self.assertEqual(len(reloaded_store.email_intake_receipts), 1)
 
     def test_two_tenants_do_not_share_email_intake_state(self):
         message = self.message()
@@ -179,6 +201,7 @@ class EmailIntakeFoundationTests(unittest.TestCase):
         self.assertIsNotNone(result_b.submitted_job_id)
         self.assertEqual(self.store.jobs[result_a.submitted_job_id].tenant_id, "tenant_email_a")
         self.assertEqual(self.store.jobs[result_b.submitted_job_id].tenant_id, "tenant_email_b")
+        self.assertEqual(len(self.store.email_intake_receipts), 2)
 
     def test_email_audit_events_are_recorded_without_email_content(self):
         processor = self.processor()
