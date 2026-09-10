@@ -44,6 +44,7 @@ class LocalStore(PersistenceStore):
         self.erp_records: dict[str, ERPRecord] = {}
         self.finops_usage_records: dict[str, UsageRecord] = {}
         self.email_intake_receipts: dict[str, dict[str, Any]] = {}
+        self.gmail_message_states: dict[str, dict[str, Any]] = {}
         self._counters: dict[str, int] = {}
         self.load()
 
@@ -63,6 +64,7 @@ class LocalStore(PersistenceStore):
                 "erp_records": {k: asdict(v) for k, v in self.erp_records.items()},
                 "finops_usage_records": {k: asdict(v) for k, v in self.finops_usage_records.items()},
                 "email_intake_receipts": self.email_intake_receipts,
+                "gmail_message_states": self.gmail_message_states,
             }
             self._atomic_write_json(payload)
 
@@ -110,6 +112,7 @@ class LocalStore(PersistenceStore):
         self.email_intake_receipts = {
             str(k): dict(v) for k, v in payload.get("email_intake_receipts", {}).items()
         }
+        self.gmail_message_states = dict(payload.get("gmail_message_states", {}))
 
     def _compatible_job_payload(self, payload: dict[str, Any]) -> dict[str, Any]:
         return _filter_dataclass_payload(Job, {"tenant_id": DEVELOPMENT_TENANT_ID, "processing_region": "AUTO", **payload})
@@ -203,6 +206,7 @@ class LocalStore(PersistenceStore):
         self.erp_records.clear()
         self.finops_usage_records.clear()
         self.email_intake_receipts.clear()
+        self.gmail_message_states.clear()
         self._counters.clear()
         self.save()
 
@@ -366,17 +370,37 @@ class LocalStore(PersistenceStore):
         return True, dict(payload)
 
     def complete_email_intake_receipt(self, receipt_id: str, changes: dict[str, Any]) -> dict[str, Any]:
-        receipt = {**self.email_intake_receipts[receipt_id], **changes, "status": "COMPLETED"}
-        self.email_intake_receipts[receipt_id] = receipt
-        self.save()
-        return dict(receipt)
+        return self.update_email_intake_receipt(receipt_id, {**changes, "status": "COMPLETED"})
 
     def fail_email_intake_receipt(self, receipt_id: str, changes: dict[str, Any]) -> dict[str, Any]:
-        receipt = {**self.email_intake_receipts[receipt_id], **changes, "status": "FAILED"}
-        self.email_intake_receipts[receipt_id] = receipt
-        self.save()
-        return dict(receipt)
+        return self.update_email_intake_receipt(receipt_id, {**changes, "status": "FAILED"})
 
     def get_email_intake_receipt(self, receipt_id: str) -> dict[str, Any] | None:
         receipt = self.email_intake_receipts.get(receipt_id)
         return dict(receipt) if receipt else None
+
+    def read_persisted_record(self, entity: str, record_id: str) -> dict[str, Any] | None:
+        if not self.path.exists():
+            return None
+        payload = json.loads(self.path.read_text(encoding="utf-8"))
+        record = payload.get(entity, {}).get(record_id)
+        return dict(record) if record is not None else None
+
+    def update_email_intake_receipt(self, receipt_id: str, changes: dict[str, Any]) -> dict[str, Any]:
+        receipt = {**self.email_intake_receipts[receipt_id], **changes}
+        previous = self.email_intake_receipts[receipt_id]
+        self.email_intake_receipts[receipt_id] = receipt
+        try:
+            self.save()
+        except Exception:
+            self.email_intake_receipts[receipt_id] = previous
+            raise
+        return dict(receipt)
+
+    def put_gmail_message_state(self, state_id: str, payload: dict[str, Any]) -> None:
+        # Eligibility writes must not accidentally flush uncommitted business caches.
+        with self._write_lock:
+            persisted = json.loads(self.path.read_text(encoding="utf-8")) if self.path.exists() else {}
+            persisted.setdefault("gmail_message_states", {})[state_id] = dict(payload)
+            self._atomic_write_json(persisted)
+            self.gmail_message_states[state_id] = dict(payload)

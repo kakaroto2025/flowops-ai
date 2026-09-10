@@ -39,7 +39,8 @@ class JobProcessor:
             self.store,
             self.auth_context,
             self.cost_guard,
-            submit_files=lambda files, region: self.create_email_job(files, processing_region=region),
+            submit_files=lambda files, region, receipts: self.create_email_job(
+                files, processing_region=region, email_receipt_ids=receipts),
             run_job=self.run_job,
         )
 
@@ -57,8 +58,11 @@ class JobProcessor:
     def create_upload_job(self, files: list[str | Path], processing_region: str = "AUTO") -> Job:
         return self._create_file_job(files, source="manual_upload", processing_region=processing_region)
 
-    def create_email_job(self, files: list[str | Path], processing_region: str = "AUTO") -> Job:
-        return self._create_file_job(files, source="email_intake", processing_region=processing_region)
+    def create_email_job(self, files: list[str | Path], processing_region: str = "AUTO",
+                         email_receipt_ids: dict[Path, str] | None = None) -> Job:
+        return self.intake.create_job(
+            [Path(file) for file in files], source="email_intake", processing_region=processing_region,
+            auth_context=self.auth_context, email_receipt_ids=email_receipt_ids)
 
     def process_email_message(
         self,

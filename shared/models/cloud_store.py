@@ -168,6 +168,7 @@ class CloudStore(PersistenceStore):
         "erp_records": "flowops_erp_records",
         "finops_usage_records": "flowops_finops_usage_records",
         "email_intake_receipts": "flowops_email_intake_receipts",
+        "gmail_message_states": "flowops_gmail_message_states",
     }
 
     def __init__(
@@ -189,6 +190,7 @@ class CloudStore(PersistenceStore):
         self.erp_records: dict[str, ERPRecord] = {}
         self.finops_usage_records: dict[str, UsageRecord] = {}
         self.email_intake_receipts: dict[str, dict[str, Any]] = {}
+        self.gmail_message_states: dict[str, dict[str, Any]] = {}
         self._counters: dict[str, int] = {}
 
     def next_id(self, prefix: str) -> str:
@@ -214,6 +216,7 @@ class CloudStore(PersistenceStore):
         self.erp_records.clear()
         self.finops_usage_records.clear()
         self.email_intake_receipts.clear()
+        self.gmail_message_states.clear()
         self._counters.clear()
         for collection in self.COLLECTIONS.values():
             try:
@@ -449,16 +452,29 @@ class CloudStore(PersistenceStore):
         return claimed, dict(receipt) if receipt else None
 
     def complete_email_intake_receipt(self, receipt_id: str, changes: dict[str, Any]) -> dict[str, Any]:
-        receipt = {**self.email_intake_receipts.get(receipt_id, {}), **changes, "status": "COMPLETED"}
-        self.email_intake_receipts[receipt_id] = receipt
-        self._persist("email_intake_receipts", receipt_id, receipt)
-        return dict(receipt)
+        return self.update_email_intake_receipt(receipt_id, {**changes, "status": "COMPLETED"})
 
     def fail_email_intake_receipt(self, receipt_id: str, changes: dict[str, Any]) -> dict[str, Any]:
-        receipt = {**self.email_intake_receipts.get(receipt_id, {}), **changes, "status": "FAILED"}
-        self.email_intake_receipts[receipt_id] = receipt
+        return self.update_email_intake_receipt(receipt_id, {**changes, "status": "FAILED"})
+
+    def read_persisted_record(self, entity: str, record_id: str) -> dict[str, Any] | None:
+        try:
+            return self.firestore.get(self.COLLECTIONS[entity], record_id)
+        except Exception as exc:
+            raise PersistenceConfigurationError("Durable record lookup failed.") from exc
+
+    def update_email_intake_receipt(self, receipt_id: str, changes: dict[str, Any]) -> dict[str, Any]:
+        previous = self.read_persisted_record("email_intake_receipts", receipt_id)
+        if previous is None:
+            raise PersistenceConfigurationError("Email receipt not found.")
+        receipt = {**previous, **changes}
         self._persist("email_intake_receipts", receipt_id, receipt)
+        self.email_intake_receipts[receipt_id] = receipt
         return dict(receipt)
+
+    def put_gmail_message_state(self, state_id: str, payload: dict[str, Any]) -> None:
+        self._persist("gmail_message_states", state_id, payload)
+        self.gmail_message_states[state_id] = dict(payload)
 
     def get_email_intake_receipt(self, receipt_id: str) -> dict[str, Any] | None:
         if receipt_id in self.email_intake_receipts:

@@ -16,6 +16,7 @@ class IntakeAgent(BaseAgent):
         source: str = "manual_upload",
         processing_region: str = "AUTO",
         auth_context: AuthContext | None = None,
+        email_receipt_ids: dict[Path, str] | None = None,
     ) -> Job:
         tenant_id = require_tenant_id(auth_context)
         region = normalize_region(processing_region)
@@ -41,9 +42,18 @@ class IntakeAgent(BaseAgent):
                 tenant_id=tenant_id,
                 status=DocumentStatus.QUEUED,
                 processing_region=region,
+                email_receipt_id=(email_receipt_ids or {}).get(file_path),
             )
             self.store.add_document(document)
             object_uri = self.store.store_document_bytes(document, file_path.read_bytes(), _content_type(file_path))
+            if document.email_receipt_id:
+                receipt = self.store.read_persisted_record("email_intake_receipts", document.email_receipt_id)
+                if not receipt or receipt.get("tenant_id") != tenant_id:
+                    raise ValueError("Email receipt tenant mismatch")
+                self.store.update_email_intake_receipt(document.email_receipt_id, {
+                    "job_id": job.id, "document_id": document.id,
+                    "pdf_persisted": True, "object_uri": object_uri,
+                })
             self.event(
                 job.id,
                 "DOCUMENT_QUEUED",

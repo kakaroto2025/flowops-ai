@@ -67,6 +67,7 @@ class Document:
     retry_count: int = 0
     created_at: str = field(default_factory=utc_now)
     updated_at: str = field(default_factory=utc_now)
+    email_receipt_id: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)

@@ -32,9 +32,11 @@ class GmailClient(Protocol):
 class GmailEmailIntakeProvider(EmailIntakeProvider):
     provider_name = "gmail"
 
-    def __init__(self, client: GmailClient, message_ids: list[str]):
+    def __init__(self, client: GmailClient, message_ids: list[str], *, verified_mailbox: str | None = None):
         self.client = client
         self.message_ids = list(message_ids)
+        # Supplied by the trusted OAuth profile verification boundary, never email headers.
+        self.verified_mailbox = verified_mailbox
 
     def list_messages(self) -> list[NormalizedEmailMessage]:
         return [self.fetch_message(message_id) for message_id in self.message_ids]
