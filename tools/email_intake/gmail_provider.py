@@ -87,7 +87,7 @@ class GmailEmailIntakeProvider(EmailIntakeProvider):
         content = _decode_base64url(encoded_data)
         size_bytes = int(body.get("size") or len(content))
         return EmailAttachment(
-            attachment_id=attachment_id or _inline_attachment_id(part),
+            attachment_id=_stable_attachment_id(part, file_name, size_bytes, attachment_id),
             file_name=file_name,
             content_type=content_type,
             size_bytes=size_bytes,
@@ -122,14 +122,16 @@ def _internal_date(value: Any) -> str:
     return datetime.fromtimestamp(timestamp, timezone.utc).isoformat()
 
 
-def _walk_parts(part: dict[str, Any]):
+def _walk_parts(part: dict[str, Any], path: str = "0"):
+    part = dict(part)
+    part["_flowops_part_path"] = path
     yield part
     children = part.get("parts", [])
     if not isinstance(children, list):
         return
-    for child in children:
+    for index, child in enumerate(children):
         if isinstance(child, dict):
-            yield from _walk_parts(child)
+            yield from _walk_parts(child, f"{path}.{index}")
 
 
 def _is_attachment(part: dict[str, Any]) -> bool:
@@ -154,3 +156,12 @@ def _inline_attachment_id(part: dict[str, Any]) -> str:
     part_id = str(part.get("partId") or "").strip()
     filename = str(part.get("filename") or "inline").strip()
     return f"inline:{part_id}:{filename}"
+
+
+def _stable_attachment_id(part: dict[str, Any], file_name: str, size_bytes: int, gmail_attachment_id: str) -> str:
+    if not gmail_attachment_id:
+        return _inline_attachment_id(part)
+    part_id = str(part.get("partId") or part.get("_flowops_part_path") or "").strip()
+    if part_id:
+        return f"gmail-part:{part_id}:{file_name}:{size_bytes}"
+    return gmail_attachment_id

@@ -136,7 +136,7 @@ class GmailEmailIntakeProviderTests(unittest.TestCase):
         self.assertEqual(message.metadata.sender, "sender@example.test")
         self.assertEqual(message.metadata.recipients, ("invoices@example.test", "ops@example.test"))
         self.assertEqual(message.metadata.subject, "Invoice attached")
-        self.assertEqual(message.attachments[0].attachment_id, "gmail-att-001")
+        self.assertEqual(message.attachments[0].attachment_id, "gmail-part:0.1:invoice.pdf:18")
         self.assertEqual(message.attachments[0].file_name, "invoice.pdf")
         self.assertEqual(message.attachments[0].content_type, "application/pdf")
         self.assertEqual(message.attachments[0].content, b"%PDF-flowops-test")
@@ -150,7 +150,7 @@ class GmailEmailIntakeProviderTests(unittest.TestCase):
         message = GmailEmailIntakeProvider(client, ["gmail-msg-001"]).list_messages()[0]
 
         self.assertEqual([attachment.file_name for attachment in message.attachments], ["logo.png", "nested.pdf"])
-        self.assertEqual(message.attachments[1].attachment_id, "gmail-att-nested")
+        self.assertEqual(message.attachments[1].attachment_id, "gmail-part:0.1.1:nested.pdf:16")
         self.assertEqual(message.attachments[1].content, b"%PDF-nested-test")
 
     def test_message_id_and_attachment_id_map_to_existing_idempotency_identifiers(self):
@@ -162,7 +162,8 @@ class GmailEmailIntakeProviderTests(unittest.TestCase):
         message = GmailEmailIntakeProvider(client, ["gmail-msg-123"]).list_messages()[0]
 
         self.assertEqual(message.metadata.provider_message_id, "gmail-msg-123")
-        self.assertEqual(message.attachments[0].attachment_id, "gmail-att-999")
+        self.assertEqual(message.attachments[0].attachment_id, "gmail-part:0.1:invoice.pdf:18")
+        self.assertEqual(client.attachment_fetches, [("gmail-msg-123", "gmail-att-999")])
 
     def test_missing_optional_headers_do_not_crash(self):
         raw = self.gmail_message()
@@ -286,6 +287,29 @@ class GmailEmailIntakeProviderTests(unittest.TestCase):
         self.assertIsNotNone(first.submitted_job_id)
         self.assertIsNone(second.submitted_job_id)
         self.assertEqual(second.duplicate[0].reason, "email_attachment_already_processed")
+        self.assertEqual(len(self.store.jobs), 1)
+
+    def test_volatile_gmail_attachment_ids_still_reuse_email_idempotency(self):
+        first = self.gmail_message(attachment_id="gmail-att-generated-a")
+        second = self.gmail_message(attachment_id="gmail-att-generated-b")
+        client = FakeGmailClient(
+            messages={"gmail-msg-001": first},
+            attachments={
+                ("gmail-msg-001", "gmail-att-generated-a"): {"data": self.encoded(self.invoice_text())},
+                ("gmail-msg-001", "gmail-att-generated-b"): {"data": self.encoded(self.invoice_text())},
+            },
+        )
+        provider = GmailEmailIntakeProvider(client, ["gmail-msg-001"])
+        processor = JobProcessor(self.store, AuthContext("user_email", "tenant_email", authenticated=True))
+
+        with patch("agents.document.agent.extract_with_gemini", return_value=self.gemini_payload()):
+            result_a = processor.process_email_provider(provider, work_dir=self.root / "email")[0]
+            client.messages["gmail-msg-001"] = second
+            result_b = processor.process_email_provider(provider, work_dir=self.root / "email")[0]
+
+        self.assertIsNotNone(result_a.submitted_job_id)
+        self.assertIsNone(result_b.submitted_job_id)
+        self.assertEqual(result_b.duplicate[0].reason, "email_attachment_already_processed")
         self.assertEqual(len(self.store.jobs), 1)
 
     def test_two_tenants_remain_isolated_with_same_fake_gmail_provider(self):
