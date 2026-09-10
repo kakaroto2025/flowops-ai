@@ -10,3 +10,7 @@ google-adk>=2.7.1
 google-cloud-firestore>=2.21.0
 google-cloud-storage>=2.19.0
 firebase-admin>=7.5.0
+google-api-python-client>=2.200.0
+google-auth-oauthlib>=1.4.1
+google-auth-httplib2>=0.4.2
+keyring>=25.7.0
