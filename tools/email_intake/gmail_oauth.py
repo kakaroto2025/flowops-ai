@@ -7,6 +7,9 @@ from typing import Any
 
 
 GMAIL_READONLY_SCOPE = "https://www.googleapis.com/auth/gmail.readonly"
+GMAIL_MODIFY_SCOPE = "https://www.googleapis.com/auth/gmail.modify"
+GMAIL_ALLOWED_SCOPES = (GMAIL_MODIFY_SCOPE,)
+GMAIL_UNEXPECTED_BROAD_SCOPES = ("https://mail.google.com/",)
 TOKEN_SERVICE_NAME = "FlowOps AI Pilot v2 Gmail OAuth"
 
 
@@ -19,6 +22,7 @@ class GmailOAuthResult:
     authorized_email: str
     expected_email: str
     scopes: tuple[str, ...]
+    granted_scopes: tuple[str, ...]
     token_stored: bool
 
     @property
@@ -61,12 +65,13 @@ class GmailOAuthBootstrap:
             authorized_email=authorized_email,
             expected_email=self.expected_email,
             scopes=self.scopes,
+            granted_scopes=self._granted_scopes(credentials),
             token_stored=True,
         )
 
     def _validate_scope(self) -> None:
-        if self.scopes != (GMAIL_READONLY_SCOPE,):
-            raise GmailOAuthError("Gmail OAuth bootstrap requires the exact gmail.readonly scope.")
+        if self.scopes != GMAIL_ALLOWED_SCOPES:
+            raise GmailOAuthError("Gmail OAuth bootstrap requires the exact gmail.modify scope.")
 
     def _validate_client_json_path(self) -> None:
         if not self.client_json_path.exists():
@@ -83,8 +88,15 @@ class GmailOAuthBootstrap:
         if not raw:
             return None
         try:
+            payload = json.loads(raw)
+            if self._payload_has_unexpected_broad_scope(payload):
+                raise GmailOAuthError("Stored Gmail OAuth credential includes an unexpectedly broad Gmail scope.")
+            if not self._payload_grants_required_scope(payload):
+                return None
             credentials_class = self._credentials_class()
-            return credentials_class.from_authorized_user_info(json.loads(raw), list(self.scopes))
+            credentials = credentials_class.from_authorized_user_info(payload, list(self.scopes))
+            self._validate_granted_scopes(credentials)
+            return credentials
         except Exception as exc:
             raise GmailOAuthError("Stored Gmail OAuth credentials are invalid.") from exc
 
@@ -92,13 +104,15 @@ class GmailOAuthBootstrap:
         try:
             flow_class = self.flow_factory or self._installed_app_flow_class()
             flow = flow_class.from_client_secrets_file(str(self.client_json_path), list(self.scopes))
-            return flow.run_local_server(
+            credentials = flow.run_local_server(
                 port=0,
                 open_browser=True,
                 prompt="consent",
                 authorization_prompt_message="Complete Gmail OAuth authorization in the browser window.",
                 success_message="FlowOps Gmail OAuth authorization completed. You may close this tab.",
             )
+            self._validate_granted_scopes(credentials)
+            return credentials
         except Exception as exc:
             raise GmailOAuthError("Gmail OAuth browser authorization failed.") from exc
 
@@ -121,9 +135,55 @@ class GmailOAuthBootstrap:
 
     def _store_credentials(self, credentials) -> None:
         try:
-            self._keyring().set_password(self.token_service_name, self.expected_email, credentials.to_json())
+            payload = json.loads(credentials.to_json())
+            payload["flowops_granted_scopes"] = list(self._granted_scopes(credentials))
+            self._keyring().set_password(self.token_service_name, self.expected_email, json.dumps(payload))
         except Exception as exc:
             raise GmailOAuthError("Gmail OAuth token could not be stored in the OS credential store.") from exc
+
+    def _payload_grants_required_scope(self, payload: dict[str, Any]) -> bool:
+        granted = self._scopes_from_payload(payload)
+        return bool(granted) and self._scopes_are_allowed(granted)
+
+    def _payload_has_unexpected_broad_scope(self, payload: dict[str, Any]) -> bool:
+        granted = set(self._scopes_from_payload(payload))
+        return any(scope in granted for scope in GMAIL_UNEXPECTED_BROAD_SCOPES)
+
+    def _validate_granted_scopes(self, credentials) -> None:
+        granted = self._granted_scopes(credentials)
+        if not granted:
+            raise GmailOAuthError("Gmail OAuth credential did not expose granted scopes safely.")
+        if not self._scopes_are_allowed(granted):
+            raise GmailOAuthError("Gmail OAuth credential does not grant exactly gmail.modify.")
+
+    def _granted_scopes(self, credentials) -> tuple[str, ...]:
+        for attribute in ("granted_scopes", "scopes"):
+            value = getattr(credentials, attribute, None)
+            parsed = self._normalize_scopes(value)
+            if parsed:
+                return parsed
+        return ()
+
+    def _scopes_from_payload(self, payload: dict[str, Any]) -> tuple[str, ...]:
+        for key in ("flowops_granted_scopes", "granted_scopes", "scopes", "scope"):
+            parsed = self._normalize_scopes(payload.get(key))
+            if parsed:
+                return parsed
+        return ()
+
+    def _normalize_scopes(self, value: Any) -> tuple[str, ...]:
+        if isinstance(value, str):
+            return tuple(scope for scope in value.split() if scope)
+        if isinstance(value, (list, tuple, set)):
+            return tuple(str(scope) for scope in value if str(scope))
+        return ()
+
+    def _scopes_are_allowed(self, granted: tuple[str, ...]) -> bool:
+        granted_set = set(granted)
+        return (
+            set(self.scopes).issubset(granted_set)
+            and not any(scope in granted_set for scope in GMAIL_UNEXPECTED_BROAD_SCOPES)
+        )
 
     def _keyring(self):
         if self.keyring is not None:

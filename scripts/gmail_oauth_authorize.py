@@ -8,7 +8,7 @@ ROOT_DIR = Path(__file__).resolve().parents[1]
 if str(ROOT_DIR) not in sys.path:
     sys.path.insert(0, str(ROOT_DIR))
 
-from tools.email_intake.gmail_oauth import GMAIL_READONLY_SCOPE, GmailOAuthBootstrap, GmailOAuthError
+from tools.email_intake.gmail_oauth import GMAIL_MODIFY_SCOPE, GmailOAuthBootstrap, GmailOAuthError
 
 
 def main() -> int:
@@ -22,7 +22,7 @@ def main() -> int:
         result = GmailOAuthBootstrap(
             client_json_path=client_path,
             expected_email=args.expected_email,
-            scopes=(GMAIL_READONLY_SCOPE,),
+            scopes=(GMAIL_MODIFY_SCOPE,),
         ).authorize_and_verify()
     except GmailOAuthError as exc:
         print(f"ERROR: {exc}")
@@ -30,7 +30,7 @@ def main() -> int:
 
     print("GMAIL_OAUTH_AUTHORIZATION=PASS")
     print(f"AUTHORIZED_MAILBOX={result.authorized_email}")
-    print("OAUTH_SCOPE=https://www.googleapis.com/auth/gmail.readonly")
+    print("OAUTH_SCOPE=https://www.googleapis.com/auth/gmail.modify")
     print("TOKEN_STORAGE=Windows Credential Manager")
     print("INBOX_LISTED=NO")
     print("MESSAGES_FETCHED=0")

@@ -46,6 +46,15 @@ class FirestoreBackend(Protocol):
     def update(self, collection: str, document_id: str, changes: dict[str, Any]) -> None: ...
     def get(self, collection: str, document_id: str) -> dict[str, Any] | None: ...
     def claim_email_receipt(self, collection: str, document_id: str, payload: dict[str, Any]) -> tuple[bool, dict[str, Any] | None]: ...
+    def claim_gmail_sync(
+        self,
+        collection: str,
+        document_id: str,
+        *,
+        tenant_id: str,
+        mailbox: str,
+        provider_message_id: str,
+    ) -> tuple[bool, dict[str, Any] | None]: ...
     def delete_collection(self, collection: str) -> None: ...
 
 
@@ -108,6 +117,44 @@ class FirestoreRepository:
             return True, receipt_payload
 
         return claim(transaction, document_ref, payload)
+
+    def claim_gmail_sync(
+        self,
+        collection: str,
+        document_id: str,
+        *,
+        tenant_id: str,
+        mailbox: str,
+        provider_message_id: str,
+    ) -> tuple[bool, dict[str, Any] | None]:
+        document_ref = self.client.collection(collection).document(document_id)
+        transaction = self.client.transaction()
+
+        @self.firestore.transactional
+        def claim(transaction, state_ref, expected_tenant: str, expected_mailbox: str, expected_message: str):
+            snapshot = state_ref.get(transaction=transaction)
+            state = snapshot.to_dict() if snapshot.exists else None
+            if not state:
+                return False, None
+            if (
+                state.get("tenant_id") != expected_tenant
+                or state.get("mailbox") != expected_mailbox
+                or state.get("provider_message_id") != expected_message
+            ):
+                return False, state
+            if state.get("gmail_state") not in {"PENDING", "ERROR"}:
+                return False, state
+            claimed = {
+                **state,
+                "gmail_state": "SYNCING",
+                "attempt_count": int(state.get("attempt_count") or 0) + 1,
+                "last_attempt_at": utc_now(),
+                "updated_at": utc_now(),
+            }
+            transaction.set(state_ref, claimed, merge=True)
+            return True, claimed
+
+        return claim(transaction, document_ref, tenant_id, mailbox.strip().lower(), provider_message_id)
 
     def delete_collection(self, collection: str) -> None:
         for document in self.client.collection(collection).stream():
@@ -489,6 +536,28 @@ class CloudStore(PersistenceStore):
         previous = self.gmail_message_states.get(state_id)
         if previous:
             self.gmail_message_states[state_id] = {**previous, **changes}
+
+    def claim_gmail_message_sync(
+        self,
+        state_id: str,
+        *,
+        tenant_id: str,
+        mailbox: str,
+        provider_message_id: str,
+    ) -> tuple[bool, dict[str, Any] | None]:
+        try:
+            claimed, state = self.firestore.claim_gmail_sync(
+                self.COLLECTIONS["gmail_message_states"],
+                state_id,
+                tenant_id=tenant_id,
+                mailbox=mailbox.strip().lower(),
+                provider_message_id=provider_message_id,
+            )
+        except Exception as exc:
+            raise PersistenceConfigurationError(f"CloudStore Gmail sync claim failed for {state_id}.") from exc
+        if state:
+            self.gmail_message_states[state_id] = dict(state)
+        return claimed, dict(state) if state else None
 
     def get_email_intake_receipt(self, receipt_id: str) -> dict[str, Any] | None:
         if receipt_id in self.email_intake_receipts:

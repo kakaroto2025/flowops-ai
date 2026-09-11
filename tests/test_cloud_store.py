@@ -80,6 +80,41 @@ class FakeFirestoreBackend:
             self.documents[key] = dict(payload)
             return True, dict(payload)
 
+    def claim_gmail_sync(
+        self,
+        collection: str,
+        document_id: str,
+        *,
+        tenant_id: str,
+        mailbox: str,
+        provider_message_id: str,
+    ) -> tuple[bool, dict | None]:
+        if self.fail_writes:
+            raise RuntimeError("firestore unavailable")
+        with self.counter_lock:
+            self.transaction_count += 1
+            key = f"{collection}/{document_id}"
+            state = self.documents.get(key)
+            if not state:
+                return False, None
+            if (
+                state.get("tenant_id") != tenant_id
+                or state.get("mailbox") != mailbox.strip().lower()
+                or state.get("provider_message_id") != provider_message_id
+            ):
+                return False, dict(state)
+            if state.get("gmail_state") not in {"PENDING", "ERROR"}:
+                return False, dict(state)
+            claimed = {
+                **state,
+                "gmail_state": "SYNCING",
+                "attempt_count": int(state.get("attempt_count") or 0) + 1,
+                "last_attempt_at": "fake-now",
+                "updated_at": "fake-now",
+            }
+            self.documents[key] = claimed
+            return True, dict(claimed)
+
     def delete_collection(self, collection: str) -> None:
         self.deleted_collections.append(collection)
         for key in list(self.documents):

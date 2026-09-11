@@ -5,16 +5,18 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from tools.email_intake.gmail_oauth import GMAIL_READONLY_SCOPE, GmailOAuthBootstrap, GmailOAuthError
+from tools.email_intake.gmail_oauth import GMAIL_MODIFY_SCOPE, GMAIL_READONLY_SCOPE, GmailOAuthBootstrap, GmailOAuthError
 
 
 class FakeCredentials:
     def __init__(self, payload: dict | None = None):
-        self.payload = payload or {"token": "redacted"}
+        self.payload = payload or {"token": "redacted", "scopes": [GMAIL_MODIFY_SCOPE]}
+        self.scopes = tuple(self.payload.get("scopes", []))
+        self.granted_scopes = tuple(self.payload.get("granted_scopes", self.scopes))
 
     @classmethod
     def from_authorized_user_info(cls, payload: dict, scopes: list[str]):
-        return cls({"payload": payload, "scopes": scopes})
+        return cls(payload)
 
     def to_json(self) -> str:
         return json.dumps(self.payload)
@@ -77,25 +79,26 @@ class GmailOAuthBootstrapTests(unittest.TestCase):
         return GmailOAuthBootstrap(
             client_json_path=overrides.pop("client_json_path", self.client_json),
             expected_email=overrides.pop("expected_email", "csicriptoinvestigation@gmail.com"),
-            scopes=overrides.pop("scopes", (GMAIL_READONLY_SCOPE,)),
+            scopes=overrides.pop("scopes", (GMAIL_MODIFY_SCOPE,)),
             keyring_backend=overrides.pop("keyring_backend", FakeKeyring()),
             flow_factory=overrides.pop("flow_factory", FakeFlow),
             service_builder=overrides.pop("service_builder", lambda *args, **kwargs: service),
             **overrides,
         )
 
-    def test_oauth_bootstrap_uses_exact_gmail_readonly_scope_and_stores_token(self):
+    def test_oauth_bootstrap_uses_exact_gmail_modify_scope_and_stores_token(self):
         keyring = FakeKeyring()
 
         result = self.bootstrap(keyring_backend=keyring).authorize_and_verify()
 
         self.assertTrue(result.mailbox_matches)
-        self.assertEqual(result.scopes, (GMAIL_READONLY_SCOPE,))
-        self.assertEqual(FakeFlow.calls[0][1], [GMAIL_READONLY_SCOPE])
+        self.assertEqual(result.scopes, (GMAIL_MODIFY_SCOPE,))
+        self.assertEqual(result.granted_scopes, (GMAIL_MODIFY_SCOPE,))
+        self.assertEqual(FakeFlow.calls[0][1], [GMAIL_MODIFY_SCOPE])
         self.assertEqual(len(keyring.set_calls), 1)
 
     def test_existing_keyring_token_skips_browser_flow(self):
-        keyring = FakeKeyring(stored=json.dumps({"token": "stored"}))
+        keyring = FakeKeyring(stored=json.dumps({"token": "stored", "scopes": [GMAIL_MODIFY_SCOPE]}))
         bootstrap = self.bootstrap(keyring_backend=keyring)
         bootstrap._credentials_class = lambda: FakeCredentials
 
@@ -104,9 +107,39 @@ class GmailOAuthBootstrapTests(unittest.TestCase):
         self.assertTrue(result.mailbox_matches)
         self.assertEqual(FakeFlow.calls, [])
 
-    def test_wrong_scope_is_rejected(self):
-        with self.assertRaisesRegex(GmailOAuthError, "gmail.readonly"):
-            self.bootstrap(scopes=("https://www.googleapis.com/auth/gmail.modify",)).authorize_and_verify()
+    def test_readonly_credential_is_not_silently_reused_for_write_mode(self):
+        keyring = FakeKeyring(stored=json.dumps({"token": "stored", "scopes": [GMAIL_READONLY_SCOPE]}))
+        bootstrap = self.bootstrap(keyring_backend=keyring)
+        bootstrap._credentials_class = lambda: FakeCredentials
+
+        result = bootstrap.authorize_and_verify()
+
+        self.assertTrue(result.mailbox_matches)
+        self.assertEqual(FakeFlow.calls[0][1], [GMAIL_MODIFY_SCOPE])
+        self.assertEqual(len(keyring.set_calls), 1)
+
+    def test_wrong_requested_scope_is_rejected(self):
+        with self.assertRaisesRegex(GmailOAuthError, "gmail.modify"):
+            self.bootstrap(scopes=(GMAIL_READONLY_SCOPE,)).authorize_and_verify()
+
+    def test_unexpected_broader_gmail_scope_is_rejected(self):
+        class BroadFlow(FakeFlow):
+            def run_local_server(self, **kwargs):
+                return FakeCredentials({"token": "redacted", "scopes": ["https://mail.google.com/"]})
+
+        with self.assertRaisesRegex(GmailOAuthError, "authorization failed"):
+            self.bootstrap(flow_factory=BroadFlow).authorize_and_verify()
+
+    def test_stored_unexpected_broader_gmail_scope_is_blocked(self):
+        keyring = FakeKeyring(stored=json.dumps({"token": "stored", "scopes": ["https://mail.google.com/"]}))
+        bootstrap = self.bootstrap(keyring_backend=keyring)
+        bootstrap._credentials_class = lambda: FakeCredentials
+
+        with self.assertRaisesRegex(GmailOAuthError, "Stored Gmail OAuth credentials are invalid"):
+            bootstrap.authorize_and_verify()
+
+        self.assertEqual(FakeFlow.calls, [])
+        self.assertEqual(keyring.set_calls, [])
 
     def test_web_client_json_is_rejected(self):
         self.client_json.write_text(json.dumps({"web": {"client_id": "redacted"}}), encoding="utf-8")

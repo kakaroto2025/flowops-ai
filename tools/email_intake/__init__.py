@@ -15,6 +15,13 @@ from .gmail_provider import (
     GmailMessageNotFoundError,
 )
 from .service import EmailIntakeService
+from .gmail_sync import (
+    GmailProcessedLabelAdapter,
+    GmailProcessedLabelError,
+    GmailProcessedLabelResult,
+    GmailProcessedLabelSynchronizer,
+    PROCESSED_LABEL_NAME,
+)
 
 __all__ = [
     "EmailAttachment",
@@ -30,5 +37,10 @@ __all__ = [
     "EmailIntakeService",
     "EmailMessageMetadata",
     "FakeEmailIntakeProvider",
+    "GmailProcessedLabelAdapter",
+    "GmailProcessedLabelError",
+    "GmailProcessedLabelResult",
+    "GmailProcessedLabelSynchronizer",
     "NormalizedEmailMessage",
+    "PROCESSED_LABEL_NAME",
 ]

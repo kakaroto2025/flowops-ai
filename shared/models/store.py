@@ -416,3 +416,36 @@ class LocalStore(PersistenceStore):
             states[state_id] = state
             self._atomic_write_json(persisted)
             self.gmail_message_states[state_id] = dict(state)
+
+    def claim_gmail_message_sync(
+        self,
+        state_id: str,
+        *,
+        tenant_id: str,
+        mailbox: str,
+        provider_message_id: str,
+    ) -> tuple[bool, dict[str, Any] | None]:
+        with self._write_lock:
+            persisted = json.loads(self.path.read_text(encoding="utf-8")) if self.path.exists() else {}
+            state = persisted.get("gmail_message_states", {}).get(state_id)
+            if state is None:
+                return False, None
+            if (
+                state.get("tenant_id") != tenant_id
+                or state.get("mailbox") != mailbox.strip().lower()
+                or state.get("provider_message_id") != provider_message_id
+            ):
+                return False, dict(state)
+            if state.get("gmail_state") not in {"PENDING", "ERROR"}:
+                return False, dict(state)
+            claimed = {
+                **state,
+                "gmail_state": "SYNCING",
+                "attempt_count": int(state.get("attempt_count") or 0) + 1,
+                "last_attempt_at": utc_now(),
+                "updated_at": utc_now(),
+            }
+            persisted["gmail_message_states"][state_id] = claimed
+            self._atomic_write_json(persisted)
+            self.gmail_message_states[state_id] = dict(claimed)
+            return True, dict(claimed)
