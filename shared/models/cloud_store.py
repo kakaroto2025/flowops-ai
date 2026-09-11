@@ -43,6 +43,7 @@ class CloudStoreConfig:
 class FirestoreBackend(Protocol):
     def allocate_counter(self, collection: str, document_id: str, prefix: str) -> int: ...
     def upsert(self, collection: str, document_id: str, payload: dict[str, Any]) -> None: ...
+    def update(self, collection: str, document_id: str, changes: dict[str, Any]) -> None: ...
     def get(self, collection: str, document_id: str) -> dict[str, Any] | None: ...
     def claim_email_receipt(self, collection: str, document_id: str, payload: dict[str, Any]) -> tuple[bool, dict[str, Any] | None]: ...
     def delete_collection(self, collection: str) -> None: ...
@@ -85,6 +86,9 @@ class FirestoreRepository:
 
     def upsert(self, collection: str, document_id: str, payload: dict[str, Any]) -> None:
         self.client.collection(collection).document(document_id).set(payload)
+
+    def update(self, collection: str, document_id: str, changes: dict[str, Any]) -> None:
+        self.client.collection(collection).document(document_id).set(changes, merge=True)
 
     def get(self, collection: str, document_id: str) -> dict[str, Any] | None:
         snapshot = self.client.collection(collection).document(document_id).get()
@@ -475,6 +479,16 @@ class CloudStore(PersistenceStore):
     def put_gmail_message_state(self, state_id: str, payload: dict[str, Any]) -> None:
         self._persist("gmail_message_states", state_id, payload)
         self.gmail_message_states[state_id] = dict(payload)
+
+    def update_gmail_message_state_fields(self, state_id: str, changes: dict[str, Any]) -> None:
+        collection = self.COLLECTIONS["gmail_message_states"]
+        try:
+            self.firestore.update(collection, state_id, dict(changes))
+        except Exception as exc:
+            raise PersistenceConfigurationError(f"CloudStore Gmail message state update failed for {state_id}.") from exc
+        previous = self.gmail_message_states.get(state_id)
+        if previous:
+            self.gmail_message_states[state_id] = {**previous, **changes}
 
     def get_email_intake_receipt(self, receipt_id: str) -> dict[str, Any] | None:
         if receipt_id in self.email_intake_receipts:

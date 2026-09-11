@@ -74,6 +74,85 @@ def test_business_outcomes(store, tmp_path, outcomes, expected):
     assert state["gmail_state"] != "SYNCED"
 
 
+@pytest.mark.parametrize("gmail_state", ["PENDING", "SYNCING", "SYNCED", "ERROR"])
+def test_eligibility_reevaluation_preserves_gmail_sync_state(store, tmp_path, gmail_state):
+    gate = seed(store, tmp_path)
+    state_id = message_state_id(TENANT, MAILBOX, MESSAGE)
+    state = store.read_persisted_record("gmail_message_states", state_id)
+    state.update(
+        eligibility_state="ELIGIBLE",
+        gmail_state=gmail_state,
+        label_id="Label_123",
+        gmail_synced_at="2026-09-11T10:00:00+00:00",
+        gmail_sync_error_code="previous-error",
+        attempt_count=3,
+        last_attempt_at="2026-09-11T10:01:00+00:00",
+    )
+    store.put_gmail_message_state(state_id, state)
+
+    assert gate.evaluate_message_for_processed_label(TENANT, MAILBOX, MESSAGE) == "ELIGIBLE"
+
+    updated = store.read_persisted_record("gmail_message_states", state_id)
+    assert updated["eligibility_state"] == "ELIGIBLE"
+    assert updated["gmail_state"] == gmail_state
+    assert updated["label_id"] == "Label_123"
+    assert updated["gmail_synced_at"] == "2026-09-11T10:00:00+00:00"
+    assert updated["gmail_sync_error_code"] == "previous-error"
+    assert updated["attempt_count"] == 3
+    assert updated["last_attempt_at"] == "2026-09-11T10:01:00+00:00"
+
+
+@pytest.mark.parametrize("outcomes,expected", [
+    (("REGISTERED",), "ELIGIBLE"),
+    (("HUMAN_REVIEW",), "INELIGIBLE"),
+    (("PROCESSING",), "NOT_READY"),
+])
+def test_eligibility_changes_without_resetting_sync_state(store, tmp_path, outcomes, expected):
+    gate = seed(store, tmp_path, outcomes)
+    state_id = message_state_id(TENANT, MAILBOX, MESSAGE)
+    state = store.read_persisted_record("gmail_message_states", state_id)
+    state.update(eligibility_state="NOT_READY", gmail_state="SYNCING")
+    store.put_gmail_message_state(state_id, state)
+
+    assert gate.evaluate_message_for_processed_label(TENANT, MAILBOX, MESSAGE) == expected
+
+    updated = store.read_persisted_record("gmail_message_states", state_id)
+    assert updated["eligibility_state"] == expected
+    assert updated["gmail_state"] == "SYNCING"
+
+
+def test_new_message_state_defaults_gmail_sync_pending(store):
+    state_id = MessageSuccessGate(store).prepare(TENANT, MAILBOX, MESSAGE, [], [])
+    state = store.read_persisted_record("gmail_message_states", state_id)
+    assert state["gmail_state"] == "PENDING"
+
+
+def test_cloud_eligibility_update_does_not_overwrite_concurrent_sync_transition(tmp_path):
+    backend = FakeFirestoreBackend()
+    store = CloudStore(CloudStoreConfig("test", "(default)", "test"), backend, FakeObjectStorage())
+    gate = seed(store, tmp_path)
+    state_id = message_state_id(TENANT, MAILBOX, MESSAGE)
+    collection = store.COLLECTIONS["gmail_message_states"]
+    key = f"{collection}/{state_id}"
+    original_update = backend.update
+
+    def sync_then_update(collection_name, document_id, changes):
+        backend.documents[f"{collection_name}/{document_id}"]["gmail_state"] = "SYNCING"
+        backend.documents[f"{collection_name}/{document_id}"]["attempt_count"] = 1
+        original_update(collection_name, document_id, changes)
+
+    backend.update = sync_then_update
+
+    assert gate.evaluate_message_for_processed_label(TENANT, MAILBOX, MESSAGE) == "ELIGIBLE"
+
+    state = backend.documents[key]
+    assert state["eligibility_state"] == "ELIGIBLE"
+    assert state["gmail_state"] == "SYNCING"
+    assert state["attempt_count"] == 1
+    assert backend.updates
+    assert all("gmail_state" not in changes for _, _, changes in backend.updates)
+
+
 @pytest.mark.parametrize("changes", [
     {"document_id": None}, {"job_id": None}, {"mailbox": "wrong@example.test"},
     {"tenant_id": "wrong"}, {"attachment_id": "wrong"}, {"business_outcome": "UNKNOWN"},
@@ -111,7 +190,7 @@ def test_cache_not_authoritative(store, tmp_path):
 
 def test_persistence_failure_never_eligible(store, tmp_path):
     gate = seed(store, tmp_path)
-    with patch.object(store, "put_gmail_message_state", side_effect=OSError("unavailable")):
+    with patch.object(store, "update_gmail_message_state_fields", side_effect=OSError("unavailable")):
         assert gate.evaluate_message_for_processed_label(TENANT, MAILBOX, MESSAGE) == "NOT_READY"
     with patch.object(store, "read_persisted_record", side_effect=OSError("unavailable")):
         assert gate.evaluate_message_for_processed_label(TENANT, MAILBOX, MESSAGE) == "NOT_READY"

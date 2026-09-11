@@ -27,6 +27,7 @@ class FakeFirestoreBackend:
         self.fail_writes = fail_writes
         self.fail_counters = fail_counters
         self.upserts: list[tuple[str, str, dict]] = []
+        self.updates: list[tuple[str, str, dict]] = []
         self.documents: dict[str, dict] = {}
         self.deleted_collections: list[str] = []
         self.counters: dict[str, dict[str, int]] = {}
@@ -52,6 +53,15 @@ class FakeFirestoreBackend:
             raise RuntimeError("firestore unavailable")
         self.upserts.append((collection, document_id, payload))
         self.documents[f"{collection}/{document_id}"] = dict(payload)
+
+    def update(self, collection: str, document_id: str, changes: dict) -> None:
+        if self.fail_writes:
+            raise RuntimeError("firestore unavailable")
+        key = f"{collection}/{document_id}"
+        if key not in self.documents:
+            raise KeyError(document_id)
+        self.updates.append((collection, document_id, dict(changes)))
+        self.documents[key] = {**self.documents[key], **changes}
 
     def get(self, collection: str, document_id: str) -> dict | None:
         self.query_count += 1

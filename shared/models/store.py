@@ -404,3 +404,15 @@ class LocalStore(PersistenceStore):
             persisted.setdefault("gmail_message_states", {})[state_id] = dict(payload)
             self._atomic_write_json(persisted)
             self.gmail_message_states[state_id] = dict(payload)
+
+    def update_gmail_message_state_fields(self, state_id: str, changes: dict[str, Any]) -> None:
+        # Partial updates keep Gmail sync fields owned by the future sync worker intact.
+        with self._write_lock:
+            persisted = json.loads(self.path.read_text(encoding="utf-8")) if self.path.exists() else {}
+            states = persisted.setdefault("gmail_message_states", {})
+            if state_id not in states:
+                raise KeyError(state_id)
+            state = {**states[state_id], **changes}
+            states[state_id] = state
+            self._atomic_write_json(persisted)
+            self.gmail_message_states[state_id] = dict(state)

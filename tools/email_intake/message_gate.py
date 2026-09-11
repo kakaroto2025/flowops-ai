@@ -31,8 +31,11 @@ class MessageSuccessGate:
         if existing:
             previous = sorted(zip(existing["receipt_ids"], existing["attachment_ids"]))
             if previous != manifest or rejected or ambiguous:
-                existing.update(manifest_unsafe=True, eligibility_state="INELIGIBLE", gmail_state="INELIGIBLE")
-                self.store.put_gmail_message_state(state_id, existing)
+                self._update_eligibility_fields(state_id, {
+                    "manifest_unsafe": True,
+                    "eligibility_state": "INELIGIBLE",
+                    "eligibility_reason": "manifest_unsafe",
+                })
             return state_id
         now = utc_now()
         self.store.put_gmail_message_state(state_id, {
@@ -55,17 +58,17 @@ class MessageSuccessGate:
             ):
                 return "INELIGIBLE"
             # Revoke stale positive eligibility before checking current durable evidence.
-            state.update(eligibility_state="NOT_READY", gmail_state="PENDING", updated_at=utc_now())
-            self.store.put_gmail_message_state(state_id, state)
+            self._update_eligibility_fields(state_id, {"eligibility_state": "NOT_READY"})
             verdict = self._evaluate(state)
-            state.update(eligibility_state=verdict,
-                         gmail_state="INELIGIBLE" if verdict == "INELIGIBLE" else "PENDING",
-                         updated_at=utc_now())
-            self.store.put_gmail_message_state(state_id, state)
+            self._update_eligibility_fields(state_id, {"eligibility_state": verdict})
             return verdict
         except Exception:
             # Never trust a cache, fallback backup, or old eligibility after an I/O failure.
             return "NOT_READY"
+
+    def _update_eligibility_fields(self, state_id: str, changes: dict[str, Any]) -> None:
+        # The success gate owns eligibility. Gmail synchronization state is updated by a separate workflow.
+        self.store.update_gmail_message_state_fields(state_id, {**changes, "eligibility_evaluated_at": utc_now(), "updated_at": utc_now()})
 
     def _evaluate(self, state: dict[str, Any]) -> str:
         receipts = state.get("receipt_ids", [])
